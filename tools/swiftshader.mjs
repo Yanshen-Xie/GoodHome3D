@@ -1,0 +1,20 @@
+// 软件渲染测试：关闭 GPU，用 SwiftShader（CPU 模拟显卡）打开系统，模拟没有独立显卡 / 关闭硬件加速的电脑。
+import { chromium } from 'playwright';
+const url = process.argv[2];
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--disable-gpu', '--enable-unsafe-swiftshader'] });
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+const errors = [];
+page.on('pageerror', (e) => errors.push(e.message));
+const t0 = Date.now();
+await page.goto(url);
+await page.waitForFunction(() => window.app && !document.getElementById('loading'), null, { timeout: 180000 });
+console.log('加载完成用时', ((Date.now() - t0) / 1000).toFixed(1), '秒');
+console.log('渲染器', await page.evaluate(() => { const gl = app.renderer.getContext(); const d = gl.getExtension('WEBGL_debug_renderer_info'); return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); }));
+await page.waitForTimeout(6000);
+console.log('高画质帧率', await page.evaluate(() => app.fps.toFixed(1)));
+await page.evaluate(() => app.setQuality(false));
+await page.waitForTimeout(6000);
+console.log('关闭高画质后帧率', await page.evaluate(() => app.fps.toFixed(1)));
+await page.screenshot({ path: 'dev/swiftshader.png' });
+console.log('错误', errors.length, errors.slice(0, 3));
+await browser.close();

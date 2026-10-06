@@ -1,0 +1,9 @@
+# 花盆材质
+newmtl terracotta
+Kd 0.72 0.42 0.3
+Ks 0.05 0.05 0.05
+Ns 10
+newmtl soil
+Kd 0.25 0.18 0.12
+Ks 0 0 0
+Ns 1
