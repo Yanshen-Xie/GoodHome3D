@@ -1,0 +1,13 @@
+# 马桶材质
+newmtl ceramic
+Kd 0.97 0.97 0.96
+Ks 0.6 0.6 0.6
+Ns 200
+newmtl seat
+Kd 0.93 0.93 0.92
+Ks 0.3 0.3 0.3
+Ns 80
+newmtl chrome
+Kd 0.8 0.82 0.85
+Ks 1 1 1
+Ns 400

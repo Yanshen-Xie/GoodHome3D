@@ -1,0 +1,23 @@
+{
+  "name": "good-house",
+  "version": "1.0.0",
+  "description": "好房子三维可视化系统",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "echarts": "^5.6.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "playwright": "1.48",
+    "vite": "^5.4.21",
+    "vite-plugin-singlefile": "^2.3.3"
+  },
+  "type": "module"
+}

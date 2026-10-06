@@ -1,0 +1,195 @@
+// 导航网格 + A* 寻路。
+// 把地面划分成 0.2m × 0.2m 的格子，墙和家具所在的格子标记为"不可通行"。
+// 用途：人物日常走动的路线、火灾时的疏散路线、漫游模式下的碰撞检测。
+export class NavGrid {
+  constructor(x0 = -13, x1 = 13, z0 = -10, z1 = 10, cell = 0.2) {
+    this.x0 = x0; this.z0 = z0; this.cell = cell;
+    this.nx = Math.round((x1 - x0) / cell);
+    this.nz = Math.round((z1 - z0) / cell);
+    this.blocked = new Uint8Array(this.nx * this.nz);   // 墙、家具
+    this.danger = new Uint8Array(this.nx * this.nz);    // 危险区域（火源附近），疏散时要绕开
+    this.clearance = null;                               // 障碍物外扩后的结果（人有宽度）
+    this.clearanceCache = {};                            // 不同外扩半径（格数）的结果
+  }
+
+  ix(x) { return Math.floor((x - this.x0) / this.cell); }
+  iz(z) { return Math.floor((z - this.z0) / this.cell); }
+  cx(i) { return this.x0 + (i + 0.5) * this.cell; }
+  cz(j) { return this.z0 + (j + 0.5) * this.cell; }
+  idx(i, j) { return j * this.nx + i; }
+  inside(i, j) { return i >= 0 && j >= 0 && i < this.nx && j < this.nz; }
+
+  /** 把矩形区域标记为障碍 */
+  blockRect(x0, x1, z0, z1) {
+    for (let j = this.iz(z0); j <= this.iz(z1 - 1e-6); j++)
+      for (let i = this.ix(x0); i <= this.ix(x1 - 1e-6); i++)
+        if (this.inside(i, j)) this.blocked[this.idx(i, j)] = 1;
+    this.clearance = null;
+    this.clearanceCache = {};
+  }
+
+  /** 设置危险区域：以 (x,z) 为圆心、半径 r 的圆 */
+  setDanger(x, z, r) {
+    this.danger.fill(0);
+    if (r <= 0) return;
+    for (let j = this.iz(z - r); j <= this.iz(z + r); j++)
+      for (let i = this.ix(x - r); i <= this.ix(x + r); i++)
+        if (this.inside(i, j) && (this.cx(i) - x) ** 2 + (this.cz(j) - z) ** 2 <= r * r) this.danger[this.idx(i, j)] = 1;
+  }
+
+  /**
+   * 障碍物向外扩 r 格：人的肩宽约 0.4m，路线中心至少离墙 0.2m（1 格）；轮椅更宽，需要外扩更多。
+   */
+  buildClearance(r = 1) {
+    if (this.clearanceCache[r]) { this.clearance = this.clearanceCache[r]; return this.clearance; }
+    const c = new Uint8Array(this.blocked);
+    for (let j = 0; j < this.nz; j++) for (let i = 0; i < this.nx; i++) {
+      if (!this.blocked[this.idx(i, j)]) continue;
+      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++)
+        if (this.inside(i + di, j + dj)) c[this.idx(i + di, j + dj)] = 1;
+    }
+    this.clearanceCache[r] = c;
+    this.clearance = c;
+    return c;
+  }
+
+  /**
+   * 通行宽度：从 (x,z) 出发，沿垂直于行进方向 (dx,dz) 的左右两侧各走到第一个障碍，两段距离之和。
+   */
+  passWidth(x, z, dx, dz, max = 3) {
+    const L = Math.hypot(dx, dz) || 1;
+    const nx = -dz / L, nz = dx / L;
+    const reach = (s) => {
+      for (let d = 0; d <= max; d += this.cell / 4) if (!this.isFree(x + nx * d * s, z + nz * d * s)) return d;
+      return max;
+    };
+    return reach(1) + reach(-1);
+  }
+
+  /** (x,z) 是否可以站人（漫游碰撞用，只看原始障碍） */
+  isFree(x, z) {
+    const i = this.ix(x), j = this.iz(z);
+    return this.inside(i, j) && !this.blocked[this.idx(i, j)];
+  }
+
+  walkable(i, j, avoidDanger) {
+    if (!this.inside(i, j)) return false;
+    const k = this.idx(i, j);
+    if (this.clearance[k]) return false;
+    if (avoidDanger && this.danger[k]) return false;
+    return true;
+  }
+
+  /** 找离 (x,z) 最近的可通行格子（起点或终点恰好落在家具边上时用） */
+  nearestWalkable(x, z, avoidDanger) {
+    const i0 = this.ix(x), j0 = this.iz(z);
+    for (let r = 0; r < 15; r++)
+      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+        if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
+        if (this.walkable(i0 + di, j0 + dj, avoidDanger)) return [i0 + di, j0 + dj];
+      }
+    return null;
+  }
+
+  /**
+   * A* 寻路：g = 已走距离，h = 到终点的直线距离（启发函数），每次展开 f = g + h 最小的格子。
+   * 8 邻域移动，斜向代价 √2；斜穿墙角时要求两个相邻直行格子都可通行。
+   * 返回世界坐标点数组 [{x,z}]，找不到返回 null。
+   */
+  findPath(sx, sz, tx, tz, { avoidDanger = false, radius = 1 } = {}) {
+    this.buildClearance(radius);
+    const s = this.nearestWalkable(sx, sz, avoidDanger), t = this.nearestWalkable(tx, tz, avoidDanger);
+    if (!s || !t) return null;
+    const N = this.nx * this.nz;
+    const g = new Float32Array(N).fill(Infinity);
+    const from = new Int32Array(N).fill(-1);
+    const closed = new Uint8Array(N);
+    const heap = new MinHeap();
+    const start = this.idx(s[0], s[1]), goal = this.idx(t[0], t[1]);
+    const h = (i, j) => Math.hypot(i - t[0], j - t[1]);
+    g[start] = 0;
+    heap.push(start, h(s[0], s[1]));
+    const dirs = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
+    while (heap.size) {
+      const cur = heap.pop();
+      if (cur === goal) break;
+      if (closed[cur]) continue;
+      closed[cur] = 1;
+      const ci = cur % this.nx, cj = (cur / this.nx) | 0;
+      for (const [di, dj, cost] of dirs) {
+        const ni = ci + di, nj = cj + dj;
+        if (!this.walkable(ni, nj, avoidDanger)) continue;
+        if (di && dj && (!this.walkable(ci + di, cj, avoidDanger) || !this.walkable(ci, cj + dj, avoidDanger))) continue;
+        const k = this.idx(ni, nj);
+        const ng = g[cur] + cost;
+        if (ng < g[k]) { g[k] = ng; from[k] = cur; heap.push(k, ng + h(ni, nj)); }
+      }
+    }
+    if (from[goal] === -1 && goal !== start) return null;
+    const cells = [];
+    for (let k = goal; k !== -1; k = from[k]) cells.push(k);
+    cells.reverse();
+    const pts = cells.map((k) => ({ x: this.cx(k % this.nx), z: this.cz((k / this.nx) | 0) }));
+    return this.smooth(pts, avoidDanger);
+  }
+
+  /** 路径平滑：能直线走到的点之间去掉中间的拐点（视线检查） */
+  smooth(pts, avoidDanger) {
+    if (pts.length < 3) return pts;
+    const out = [pts[0]];
+    let a = 0;
+    while (a < pts.length - 1) {
+      let b = pts.length - 1;
+      while (b > a + 1 && !this.lineFree(pts[a], pts[b], avoidDanger)) b--;
+      out.push(pts[b]);
+      a = b;
+    }
+    return out;
+  }
+
+  lineFree(p, q, avoidDanger) {
+    const d = Math.hypot(q.x - p.x, q.z - p.z);
+    const n = Math.ceil(d / (this.cell * 0.5));
+    for (let k = 0; k <= n; k++) {
+      const x = p.x + (q.x - p.x) * k / n, z = p.z + (q.z - p.z) * k / n;
+      if (!this.walkable(this.ix(x), this.iz(z), avoidDanger)) return false;
+    }
+    return true;
+  }
+}
+
+/** 二叉堆（小根堆），A* 用来快速取出 f 值最小的格子 */
+class MinHeap {
+  constructor() { this.k = []; this.v = []; }
+  get size() { return this.k.length; }
+  push(key, val) {
+    const k = this.k, v = this.v;
+    k.push(key); v.push(val);
+    let i = k.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (v[p] <= v[i]) break;
+      [k[p], k[i]] = [k[i], k[p]]; [v[p], v[i]] = [v[i], v[p]];
+      i = p;
+    }
+  }
+  pop() {
+    const k = this.k, v = this.v;
+    const top = k[0];
+    const lk = k.pop(), lv = v.pop();
+    if (k.length) {
+      k[0] = lk; v[0] = lv;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1, r = l + 1;
+        let m = i;
+        if (l < k.length && v[l] < v[m]) m = l;
+        if (r < k.length && v[r] < v[m]) m = r;
+        if (m === i) break;
+        [k[m], k[i]] = [k[i], k[m]]; [v[m], v[i]] = [v[i], v[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
+}
