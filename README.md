@@ -37,7 +37,7 @@ bash scripts/package.sh   # 编译并复制到 release/，同时打包源代码
 
 ### 独立模块预览（开发工具）
 
-运行 `npm run dev` 后访问 <http://127.0.0.1:5188/src/dev/module-preview.html>。预览页与整屋应用通过同一个 `ModuleCatalog` 注册函数创建家具、设备样例和整屋实际使用的设备工厂，可查看模块信息与能力、操作设备控件、调整位置和比例、播放 GLB 动画，也可加载本地 GLB 或 URL GLB/GLTF。`device-*` 是方便比较的简化样件，`house-*` 是整屋使用的实际模块工厂。
+运行 `npm run dev` 后，整屋主界面右上角会出现“原子模块预览”入口；也可直接访问 <http://127.0.0.1:5188/src/dev/module-preview.html>。预览页与整屋应用通过同一个 `ModuleCatalog` 注册函数创建家具、设备样例和整屋实际使用的设备工厂，可查看模块信息与能力、操作设备控件、调整位置和比例、播放 GLB 动画，也可加载本地 GLB 或 URL GLB/GLTF。`device-*` 是方便比较的简化样件，`house-*` 是整屋使用的实际模块工厂。
 
 该页面供开发调试使用，不会并入面向演示的单文件 `dist/index.html`。
 

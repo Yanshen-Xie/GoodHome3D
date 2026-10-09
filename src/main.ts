@@ -299,7 +299,20 @@ function buildUI(app, tabs) {
   });
   app.ui = { syncView: () => floorBtns.forEach((b) => b.classList.toggle('on', b.dataset.v === String(app.view))) };
   app.ui.syncView();
-  right.prepend(floorBox, el('button', { class: 'btn dash-btn', onclick: () => app.dashboard.toggle() }, '📊 数据大屏'));
+  const previewLink = import.meta.env.DEV
+    ? el('a', {
+      class: 'module-preview-link',
+      href: '/src/dev/module-preview.html',
+      target: '_blank',
+      rel: 'noopener',
+      title: '打开家具和设备的独立模块预览页',
+    }, '🧩 原子模块预览')
+    : null;
+  right.prepend(
+    floorBox,
+    ...(previewLink ? [previewLink] : []),
+    el('button', { class: 'btn dash-btn', onclick: () => app.dashboard.toggle() }, '📊 数据大屏'),
+  );
 
   // 视点按钮
   const views = document.getElementById('views');

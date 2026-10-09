@@ -138,6 +138,8 @@ select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid 
 .floor-switch button + button { border-left: 1px solid var(--line); }
 .floor-switch button.on { background: #1d2733; color: #fff; }
 .dash-btn { background: #0f1c2e !important; color: #9fd0ff !important; border-color: transparent !important; }
+#topbar .module-preview-link { display: inline-flex; align-items: center; border: 1px solid var(--line); background: #fff; color: var(--text); padding: 6px 11px; border-radius: 7px; text-decoration: none; }
+#topbar .module-preview-link:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- 数据大屏 ---------- */
 #dash { position: fixed; top: 52px; left: 0; right: 0; bottom: 70px; z-index: 8; pointer-events: none; display: none; }
