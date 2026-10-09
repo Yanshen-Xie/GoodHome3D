@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>独立模块预览 · 好房子</title>
+  <style>
+    :root { color-scheme: dark; font: 14px/1.45 system-ui, sans-serif; background: #111820; color: #e7edf2; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 760px; height: 100vh; overflow: hidden; }
+    button, input, select { font: inherit; color: inherit; }
+    button, select, input[type="text"], input[type="number"], input[type="url"] { background: #202c37; border: 1px solid #3b4b59; border-radius: 6px; padding: 7px 9px; }
+    button { cursor: pointer; } button:hover { background: #2b3b48; }
+    button.primary { background: #167d72; border-color: #229b8d; }
+    .layout { height: 100vh; display: grid; grid-template-columns: 330px minmax(360px, 1fr); }
+    aside { overflow: auto; padding: 18px; background: #18222c; border-right: 1px solid #293744; }
+    h1 { font-size: 18px; margin: 0 0 5px; } h2 { font-size: 13px; color: #9db3c3; text-transform: uppercase; letter-spacing: .05em; margin: 20px 0 9px; }
+    p.hint { color: #a8b8c5; margin: 0 0 14px; font-size: 12px; }
+    .field { display: grid; gap: 5px; margin: 10px 0; } .field label, .control label { color: #b9c8d3; font-size: 12px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .row.three { grid-template-columns: repeat(3, 1fr); }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 11px 0; }
+    .actions button { flex: 1; }
+    .control-list { display: grid; gap: 9px; }
+    .control { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; background: #202c37; padding: 8px 10px; border-radius: 6px; }
+    .control input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: #32b5a6; }
+    .control output { color: #e9f2f6; font-variant-numeric: tabular-nums; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #b8c9d6; background: #111820; padding: 10px; border-radius: 6px; font-size: 11px; }
+    #error { color: #ff9c8c; min-height: 1.4em; }
+    main { min-width: 0; position: relative; }
+    #viewport { position: absolute; inset: 0; } #viewport canvas { display: block; width: 100%; height: 100%; }
+    .overlay { position: absolute; pointer-events: none; top: 14px; left: 14px; padding: 7px 10px; border-radius: 6px; background: #111820cc; color: #c6d3dc; font-size: 12px; }
+    .overlay.right { left: auto; right: 14px; }
+    #file { display: none; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1>独立模块预览</h1>
+      <p class="hint">直接创建单件家具、真实设备工厂或 Blender 模型；可操作设备能力并观察模块自身的反馈，无需加载整屋场景。</p>
+
+      <div class="field"><label for="filter">模块类别</label><select id="filter">
+        <option value="all">全部</option><option value="furniture">家具</option><option value="sample-device">设备示例模型</option><option value="house-device">整屋设备工厂</option>
+      </select></div>
+      <div class="field"><label for="definition">模块工厂</label><select id="definition"></select></div>
+      <div class="row">
+        <div class="field"><label for="module-id">实例 ID</label><input id="module-id" type="text" /></div>
+        <div class="field"><label for="module-name">名称</label><input id="module-name" type="text" /></div>
+      </div>
+      <div class="actions"><button id="create" class="primary">创建 / 重载</button><button id="remove">卸载模块</button></div>
+
+      <h2>放置与变换</h2>
+      <div class="row three">
+        <div class="field"><label for="x">X</label><input id="x" type="number" step="0.1" /></div>
+        <div class="field"><label for="y">Y</label><input id="y" type="number" step="0.1" /></div>
+        <div class="field"><label for="z">Z</label><input id="z" type="number" step="0.1" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="yaw">绕 Y 轴旋转（度）</label><input id="yaw" type="number" step="5" /></div>
+        <div class="field"><label for="scale">缩放</label><input id="scale" type="number" min="0.01" step="0.1" /></div>
+      </div>
+      <div class="actions"><button id="apply-transform">应用变换</button></div>
+
+      <h2>外部 Blender 模型</h2>
+      <div class="field"><label for="model-url">GLB / GLTF URL</label><input id="model-url" type="url" placeholder="https://…/model.glb" /></div>
+      <div class="actions"><button id="load-url">加载 URL</button><button id="choose-file">选择本地 GLB</button></div>
+      <input id="file" type="file" accept=".glb,model/gltf-binary" />
+
+      <h2>设备功能预览</h2>
+      <div id="controls" class="control-list"><p class="hint">先创建一个模块。</p></div>
+      <div id="animation"></div>
+
+      <h2>模块信息</h2>
+      <div id="error" role="status"></div>
+      <pre id="details">尚未加载模块</pre>
+    </aside>
+    <main>
+      <div id="viewport"></div>
+      <div class="overlay">左键旋转 · 右键平移 · 滚轮缩放</div>
+      <div id="module-label" class="overlay right">等待创建模块</div>
+    </main>
+  </div>
+  <script type="module" src="./module-preview.ts"></script>
+</body>
+</html>

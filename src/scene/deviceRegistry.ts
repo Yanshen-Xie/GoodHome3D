@@ -5,9 +5,12 @@ import {
 } from '../modules/contracts';
 import type {
   BatteryCapability, CameraCapability, ClimateCapability, CurtainCapability, DeviceStatus,
-  DeviceStatusCapability, DisplayCapability, ElevatorCapability, IndicatorCapability,
-  IrrigationCapability, LightingCapability, LockCapability, ModuleInfoCapability,
-  PowerCapability, RotatingCapability, SosCapability, ValveCapability, VentilationCapability,
+  CircuitBreakerCapability, DeviceStatusCapability, DisplayCapability, ElevatorCapability,
+  EnergyOutputCapability, EnvironmentSensorCapability, FilterCapability, FireAlarmCapability,
+  FireBlanketCapability, FireExtinguisherCapability, IndicatorCapability, IntercomCapability,
+  InverterCapability, IrrigationCapability, LightingCapability, LockCapability, ModuleInfoCapability,
+  NetworkCapability, PowerCapability, PresenceSensorCapability, RotatingCapability, ScalarSensorCapability,
+  SosCapability, TankLevelCapability, ValveCapability, VentilationCapability, WaterLeakSensorCapability,
 } from '../modules/contracts';
 
 /** Public device descriptor. Device-specific fields stay private to their implementation. */
@@ -120,6 +123,66 @@ export class DeviceRegistry<T extends DeviceRegistryEntry = DeviceRegistryEntry>
 
   getElevator(id: string): ElevatorCapability | undefined {
     return this.getCapability<ElevatorCapability>(id, DEVICE_CAPABILITY.elevator);
+  }
+
+  getEnvironmentSensor(id: string): EnvironmentSensorCapability | undefined {
+    return this.getCapability<EnvironmentSensorCapability>(id, DEVICE_CAPABILITY.environmentSensor);
+  }
+
+  getPresenceSensor(id: string): PresenceSensorCapability | undefined {
+    return this.getCapability<PresenceSensorCapability>(id, DEVICE_CAPABILITY.presenceSensor);
+  }
+
+  getSmokeSensor(id: string): ScalarSensorCapability | undefined {
+    return this.getCapability<ScalarSensorCapability>(id, DEVICE_CAPABILITY.smokeSensor);
+  }
+
+  getGasSensor(id: string): ScalarSensorCapability | undefined {
+    return this.getCapability<ScalarSensorCapability>(id, DEVICE_CAPABILITY.gasSensor);
+  }
+
+  getWaterLeakSensor(id: string): WaterLeakSensorCapability | undefined {
+    return this.getCapability<WaterLeakSensorCapability>(id, DEVICE_CAPABILITY.waterLeakSensor);
+  }
+
+  getFireAlarm(id: string): FireAlarmCapability | undefined {
+    return this.getCapability<FireAlarmCapability>(id, DEVICE_CAPABILITY.fireAlarm);
+  }
+
+  getFireExtinguisher(id: string): FireExtinguisherCapability | undefined {
+    return this.getCapability<FireExtinguisherCapability>(id, DEVICE_CAPABILITY.fireExtinguisher);
+  }
+
+  getFireBlanket(id: string): FireBlanketCapability | undefined {
+    return this.getCapability<FireBlanketCapability>(id, DEVICE_CAPABILITY.fireBlanket);
+  }
+
+  getCircuits(id: string): CircuitBreakerCapability | undefined {
+    return this.getCapability<CircuitBreakerCapability>(id, DEVICE_CAPABILITY.circuits);
+  }
+
+  getNetwork(id: string): NetworkCapability | undefined {
+    return this.getCapability<NetworkCapability>(id, DEVICE_CAPABILITY.network);
+  }
+
+  getIntercom(id: string): IntercomCapability | undefined {
+    return this.getCapability<IntercomCapability>(id, DEVICE_CAPABILITY.intercom);
+  }
+
+  getGeneration(id: string): EnergyOutputCapability | undefined {
+    return this.getCapability<EnergyOutputCapability>(id, DEVICE_CAPABILITY.generation);
+  }
+
+  getInverter(id: string): InverterCapability | undefined {
+    return this.getCapability<InverterCapability>(id, DEVICE_CAPABILITY.inverter);
+  }
+
+  getTank(id: string): TankLevelCapability | undefined {
+    return this.getCapability<TankLevelCapability>(id, DEVICE_CAPABILITY.tank);
+  }
+
+  getFilter(id: string): FilterCapability | undefined {
+    return this.getCapability<FilterCapability>(id, DEVICE_CAPABILITY.filter);
   }
 
   getStatus(id: string): DeviceStatus | undefined {

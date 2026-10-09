@@ -8,7 +8,15 @@ export const MODULE_CAPABILITY = {
   deviceStatus: 'deviceStatus',
   footprint: 'footprint',
   animation: 'animation',
+  appearance: 'appearance',
   info: 'info',
+} as const;
+
+/** Stable IDs for narrow services that a standalone module factory may consume. */
+export const MODULE_SERVICE = {
+  lightPool: 'scene.lightPool',
+  floorY: 'scene.floorY',
+  ceilingY: 'scene.ceilingY',
 } as const;
 
 export const DEVICE_CAPABILITY = {
@@ -27,6 +35,21 @@ export const DEVICE_CAPABILITY = {
   elevator: 'device.elevator',
   lock: 'device.lock',
   valve: 'device.valve',
+  environmentSensor: 'device.environmentSensor',
+  presenceSensor: 'device.presenceSensor',
+  smokeSensor: 'device.smokeSensor',
+  gasSensor: 'device.gasSensor',
+  waterLeakSensor: 'device.waterLeakSensor',
+  fireAlarm: 'device.fireAlarm',
+  fireExtinguisher: 'device.fireExtinguisher',
+  fireBlanket: 'device.fireBlanket',
+  circuits: 'device.circuits',
+  network: 'device.network',
+  intercom: 'device.intercom',
+  generation: 'device.generation',
+  inverter: 'device.inverter',
+  tank: 'device.tank',
+  filter: 'device.filter',
 } as const;
 
 export interface BooleanControlCapability {
@@ -102,6 +125,9 @@ export interface CameraCapability {
 
 export interface IrrigationCapability {
   getSprinklers(): readonly { readonly x: number; readonly z: number }[];
+  /** Optional on legacy scene adapters; standalone irrigation modules implement both methods. */
+  isRunning?(): boolean;
+  setRunning?(running: boolean): void;
 }
 
 export interface BatteryCapability {
@@ -119,10 +145,113 @@ export interface IndicatorCapability {
   setIntensity(intensity: number): void;
 }
 
+export interface EnvironmentReadings {
+  readonly temperatureC: number;
+  readonly humidityPercent: number;
+  readonly pm25MicrogramsM3: number;
+  readonly co2Ppm: number;
+}
+
+export interface EnvironmentSensorCapability {
+  getReadings(): EnvironmentReadings;
+  setReadings(readings: Partial<EnvironmentReadings>): void;
+}
+
+export interface PresenceSensorCapability {
+  isOccupied(): boolean;
+  setOccupied(occupied: boolean): void;
+}
+
+export interface WaterLeakSensorCapability {
+  isLeaking(): boolean;
+  setLeaking(leaking: boolean): void;
+}
+
+/** Numeric alarm sensor reading; unit and threshold are part of the concrete device contract. */
+export interface ScalarSensorCapability {
+  getValue(): number;
+  setValue(value: number): void;
+  getUnit(): string;
+  getAlarmThreshold(): number;
+  getFaultThreshold?(): number;
+}
+
+export interface FireAlarmCapability {
+  isActive(): boolean;
+  activate(): void;
+  deactivate(): void;
+}
+
+export interface FireExtinguisherCapability {
+  getRemainingPercent(): number;
+  setRemainingPercent(percent: number): void;
+  isDischarging(): boolean;
+  discharge(): boolean;
+  stopDischarge(): void;
+  reset(): void;
+}
+
+export interface FireBlanketCapability {
+  isDeployed(): boolean;
+  deploy(): void;
+  reset(): void;
+}
+
+export interface CircuitState {
+  readonly id: string;
+  readonly label: string;
+  readonly isOn: boolean;
+}
+
+export interface CircuitBreakerCapability {
+  getCircuits(): readonly CircuitState[];
+  setCircuit(id: string, isOn: boolean): void;
+}
+
+export interface NetworkCapability {
+  isOnline(): boolean;
+  setOnline(online: boolean): void;
+  getSignalStrength(): number;
+  setSignalStrength(percent: number): void;
+}
+
+export interface IntercomCapability {
+  isCalling(): boolean;
+  startCall(): void;
+  hangUp(): void;
+  requestDoorUnlock(): void;
+}
+
+export interface EnergyOutputCapability {
+  getPowerKW(): number;
+  setPowerKW(powerKW: number): void;
+  getRatedPowerKW(): number;
+}
+
+export interface InverterCapability {
+  getInputPowerKW(): number;
+  setInputPowerKW(powerKW: number): void;
+  getOutputPowerKW(): number;
+  getEfficiencyPercent(): number;
+}
+
+export interface TankLevelCapability {
+  getLevelPercent(): number;
+  setLevelPercent(percent: number): void;
+  getCapacityLiters(): number;
+}
+
+export interface FilterCapability {
+  getHealthPercent(): number;
+  setHealthPercent(percent: number): void;
+  replaceFilter(): void;
+}
+
 export interface ElevatorCapability {
   call(floor: number, onArrive?: () => void): boolean;
   getCurrentFloor(): number;
   isMoving(): boolean;
+  getFloors?(): readonly { readonly index: number; readonly label: string }[];
 }
 
 export type DeviceStatus = 'normal' | 'warning' | 'fault' | 'off';
@@ -142,6 +271,31 @@ export interface AnimationCapability {
   readonly clips: readonly THREE.AnimationClip[];
   play(name?: string): boolean;
   stop(): void;
+}
+
+export type AppearanceProperty = 'color' | 'roughness' | 'metalness' | 'opacity' | 'emissive' | 'emissiveIntensity';
+
+export interface AppearanceMaterialSlot {
+  readonly id: string;
+  readonly label: string;
+  readonly supports: readonly AppearanceProperty[];
+  readonly color?: number;
+  readonly roughness?: number;
+  readonly metalness?: number;
+  readonly opacity: number;
+  readonly emissive?: number;
+  readonly emissiveIntensity?: number;
+}
+
+export type AppearanceMaterialPatch = Partial<Pick<AppearanceMaterialSlot,
+  'color' | 'roughness' | 'metalness' | 'opacity' | 'emissive' | 'emissiveIntensity'>>;
+
+/** Live, module-local appearance editing that never mutates materials shared by other modules. */
+export interface AppearanceCapability {
+  getSlots(): readonly AppearanceMaterialSlot[];
+  setMaterial(slotId: string, patch: AppearanceMaterialPatch): void;
+  reset(slotId?: string): void;
+  dispose(): void;
 }
 
 export interface ModulePose {

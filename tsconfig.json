@@ -12,9 +12,7 @@
     "noEmit": true,
     "strict": false,
     "noImplicitAny": false,
-    "allowJs": true,
-    "checkJs": false,
     "types": []
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "vite.config.js"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "vite.config.ts"]
 }

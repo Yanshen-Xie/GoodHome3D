@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { isSharedGeometry, isSharedMaterial, isSharedTexture } from '../scene/common.js';
+import { createAppearanceCapability } from './appearance.js';
 import type {
+  AppearanceCapability,
   ModuleFactoryContext,
   ModuleInfo,
   ModulePose,
@@ -33,6 +35,7 @@ export class SceneModule implements SceneModuleContract {
   private readonly capabilityMap = new Map<string, unknown>();
   private readonly updateHook: (dt: number) => void;
   private readonly disposeHook?: () => void;
+  private readonly appearanceCapability: AppearanceCapability;
   private readonly resourcesOwned: boolean;
   private disposedFlag = false;
 
@@ -44,7 +47,11 @@ export class SceneModule implements SceneModuleContract {
     this.updateHook = options.update ?? (() => {});
     this.disposeHook = options.dispose;
     this.resourcesOwned = options.disposeResources ?? false;
-    for (const [key, value] of options.capabilities ?? []) this.capabilityMap.set(key, value);
+    for (const [key, value] of options.capabilities ?? []) {
+      if (key !== MODULE_CAPABILITY.appearance) this.capabilityMap.set(key, value);
+    }
+    this.appearanceCapability = createAppearanceCapability(this.root, isSharedMaterial);
+    this.capabilityMap.set(MODULE_CAPABILITY.appearance, this.appearanceCapability);
     const infoCapability: ModuleInfoCapability = {
       setData: (key, value) => this.setInfoData(key, value),
       mergeData: (values) => this.mergeInfoData(values),
@@ -113,12 +120,14 @@ export class SceneModule implements SceneModuleContract {
 
   setCapability<T>(name: string, value: T): void {
     if (this.disposedFlag) throw new Error(`Cannot change capabilities on disposed scene module: ${this.id}`);
+    if (name === MODULE_CAPABILITY.appearance) throw new Error('Appearance is managed by the scene module runtime');
     this.capabilityMap.set(name, value);
   }
 
   dispose({ disposeResources = this.resourcesOwned }: { disposeResources?: boolean } = {}): void {
     if (this.disposedFlag) return;
     this.unmount();
+    this.appearanceCapability.dispose();
     if (disposeResources) disposeObjectResources(this.root);
     this.disposeHook?.();
     this.capabilityMap.clear();
