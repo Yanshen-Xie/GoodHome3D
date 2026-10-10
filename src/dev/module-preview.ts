@@ -26,6 +26,7 @@ import type {
   LightingCapability,
   LockCapability,
   ModuleFactoryContext,
+  ModulePose,
   NetworkCapability,
   PowerCapability,
   PresenceSensorCapability,
@@ -45,17 +46,6 @@ import { furniturePreviewSamples } from '../furniture/catalog.js';
 import type { FurnitureKind } from '../furniture/catalog.js';
 import { DEVICE_LABELS, type DeviceKind } from '../scene/deviceCatalog.js';
 import { LightPool } from '../systems/lightPool.js';
-
-type InfoControl = {
-  type: string;
-  label?: string;
-  min?: number;
-  max?: number;
-  step?: number;
-  get?: () => boolean | number;
-  set?: (value: boolean | number) => void;
-  onClick?: () => void;
-};
 
 const $ = <T extends HTMLElement>(selector: string): T => {
   const element = document.querySelector<T>(selector);
@@ -109,6 +99,27 @@ const catalog = new SceneModuleCatalog();
 registerBuiltInSceneModules(catalog);
 
 let activeModule: SceneModuleContract | undefined;
+// 正在查看的整屋实时模块：属于主界面的场景，本页只读写它的能力，不挂载、不释放
+let liveModule: SceneModuleContract | undefined;
+const inspected = (): SceneModuleContract | undefined => liveModule ?? activeModule;
+
+/** 主界面运行时中本页用到的部分 */
+interface LiveRuntime {
+  moduleHost: { modules(): readonly SceneModuleContract[]; get(id: string): SceneModuleContract | undefined; move(id: string, pose: ModulePose): void };
+  footprints: { get(id: string): { floor: number; rect: unknown } | undefined };
+  selection: { select(object: THREE.Object3D | null): void };
+  rig: { focus(object: THREE.Object3D): void };
+}
+
+/** 从整屋主界面打开时，通过 window.opener 取得它的运行时；主界面关闭或重建后可能变化，每次重新读取 */
+function liveRuntime(): LiveRuntime | null {
+  try {
+    const app = (window.opener as { app?: Partial<LiveRuntime> } | null)?.app;
+    return app?.moduleHost && app.footprints && app.selection && app.rig ? app as LiveRuntime : null;
+  } catch {
+    return null;
+  }
+}
 let createRevision = 0;
 const displayPreviewTextures = new Map<string, THREE.Texture>();
 const clock = new THREE.Clock();
@@ -275,6 +286,7 @@ function safetyConfig(kind: string, id: string, name: string) {
 
 function clearActiveModule(): void {
   createRevision++;
+  liveModule = undefined; // 实时模块归主界面所有，这里只断开查看
   if (activeModule) {
     activeModule.dispose();
     activeModule = undefined;
@@ -292,16 +304,18 @@ function setError(error?: unknown): void {
 }
 
 function syncTransformFields(): void {
-  if (!activeModule) return;
-  $<HTMLInputElement>('#x').value = String(Number(activeModule.root.position.x.toFixed(3)));
-  $<HTMLInputElement>('#y').value = String(Number(activeModule.root.position.y.toFixed(3)));
-  $<HTMLInputElement>('#z').value = String(Number(activeModule.root.position.z.toFixed(3)));
-  $<HTMLInputElement>('#yaw').value = String(Number(THREE.MathUtils.radToDeg(activeModule.root.rotation.y).toFixed(1)));
-  $<HTMLInputElement>('#scale').value = String(Number(activeModule.root.scale.x.toFixed(3)));
+  const module = inspected();
+  if (!module) return;
+  $<HTMLInputElement>('#x').value = String(Number(module.root.position.x.toFixed(3)));
+  $<HTMLInputElement>('#y').value = String(Number(module.root.position.y.toFixed(3)));
+  $<HTMLInputElement>('#z').value = String(Number(module.root.position.z.toFixed(3)));
+  $<HTMLInputElement>('#yaw').value = String(Number(THREE.MathUtils.radToDeg(module.root.rotation.y).toFixed(1)));
+  $<HTMLInputElement>('#scale').value = String(Number(module.root.scale.x.toFixed(3)));
 }
 
 function applyTransform(): void {
-  if (!activeModule) return;
+  const module = inspected();
+  if (!module) return;
   const x = Number(($('#x') as HTMLInputElement).value);
   const y = Number(($('#y') as HTMLInputElement).value);
   const z = Number(($('#z') as HTMLInputElement).value);
@@ -311,11 +325,14 @@ function applyTransform(): void {
     setError('位置、旋转和缩放必须是有效数字，缩放必须大于 0。');
     return;
   }
-  activeModule.place({
+  const pose: ModulePose = {
     position: [x, y, z],
-    rotation: [activeModule.root.rotation.x, yaw, activeModule.root.rotation.z],
+    rotation: [module.root.rotation.x, yaw, module.root.rotation.z],
     scale,
-  });
+  };
+  // 整屋实时模块经主界面的模块宿主移动，导航占地随之更新
+  if (module === liveModule) liveRuntime()?.moduleHost.move(module.id, pose);
+  else module.place(pose);
   setError();
   refreshDetails();
 }
@@ -466,19 +483,18 @@ function renderDisplayControl(display: DisplayCapability): void {
 function renderModuleControls(module: SceneModuleContract): void {
   controlsElement.replaceChildren();
   const hasTypedDeviceFeature = Object.values(DEVICE_CAPABILITY).some((name) => module.capabilities.has(name));
-  const infoControls = (module.info.controls as InfoControl[] | undefined) ?? [];
+  const infoControls = module.info.controls ?? [];
   if (!hasTypedDeviceFeature) {
     for (const control of infoControls) {
-      if (control.type === 'toggle' && control.get && control.set) {
-        createCheckbox(control.label ?? '开关', () => Boolean(control.get?.()), (value) => control.set?.(value));
-      } else if (control.type === 'range' && control.get && control.set) {
-        createRange(control.label ?? '数值', control.min ?? 0, control.max ?? 1, control.step ?? 0.01,
-          () => Number(control.get?.() ?? 0), (value) => control.set?.(value));
-      } else if (control.type === 'button' && (control.onClick || control.set)) {
+      if (control.type === 'toggle') {
+        createCheckbox(control.label, control.get, control.set);
+      } else if (control.type === 'range') {
+        createRange(control.label, control.min, control.max, control.step, control.get, control.set);
+      } else {
         const button = document.createElement('button');
-        button.textContent = control.label ?? '执行';
-        button.addEventListener('click', () => { control.onClick?.(); control.set?.(true); refreshDetails(); });
-        addControl(control.label ?? '操作', button);
+        button.textContent = control.label;
+        button.addEventListener('click', () => { control.onClick(); refreshDetails(); });
+        addControl(control.label, button);
       }
     }
   }
@@ -651,14 +667,19 @@ function renderAnimation(module: SceneModuleContract): void {
 }
 
 function refreshDetails(): void {
+  const activeModule = inspected();
   if (!activeModule) return;
+  if (activeModule.disposed) { details.textContent = `模块 ${activeModule.id} 已被主界面释放`; return; }
   const extinguisher = activeModule.getCapability<FireExtinguisherCapability>(DEVICE_CAPABILITY.fireExtinguisher);
   const extinguisherReadout = document.getElementById('extinguisher-readout');
   if (extinguisher && extinguisherReadout) extinguisherReadout.textContent = `${extinguisher.getRemainingPercent().toFixed(0)}%${extinguisher.isDischarging() ? ' · 喷射中' : ''}`;
   const capabilities = [...activeModule.capabilities.keys()];
+  const footprint = activeModule === liveModule ? liveRuntime()?.footprints.get(activeModule.id) : undefined;
   details.textContent = JSON.stringify({
+    来源: activeModule === liveModule ? '整屋实时实例' : '本页创建',
     id: activeModule.id,
     kind: activeModule.kind,
+    ...(footprint ? { 导航占地: footprint } : {}),
     info: activeModule.info,
     capabilities,
     transform: {
@@ -694,13 +715,24 @@ function focusModule(module: SceneModuleContract): void {
   syncTransformFields();
 }
 
-async function replaceModule(factory: () => Promise<SceneModuleContract>): Promise<void> {
+// 正在进行的加载；开始新的加载或点击移除时取消它
+let pendingLoad: AbortController | null = null;
+
+function cancelPendingLoad(): void {
+  pendingLoad?.abort();
+  pendingLoad = null;
+}
+
+async function replaceModule(factory: (signal: AbortSignal) => Promise<SceneModuleContract>): Promise<void> {
+  cancelPendingLoad();
+  const controller = new AbortController();
+  pendingLoad = controller;
   clearActiveModule();
   const requestRevision = createRevision;
   setError();
   try {
-    const module = await factory();
-    if (requestRevision !== createRevision) { module.dispose(); return; }
+    const module = await factory(controller.signal);
+    if (controller.signal.aborted || requestRevision !== createRevision) { module.dispose(); return; }
     activeModule = module;
     focusModule(module);
     renderModuleControls(module);
@@ -708,14 +740,17 @@ async function replaceModule(factory: () => Promise<SceneModuleContract>): Promi
     labelElement.textContent = `${module.info.name} · ${module.kind} · ${module.id}`;
     refreshDetails();
   } catch (error) {
+    if ((error as Error)?.name === 'AbortError') return; // 被新的加载取代或被移除，不算错误
     setError(error);
+  } finally {
+    if (pendingLoad === controller) pendingLoad = null;
   }
 }
 
 function createSelectedModule(): void {
   const id = definitionSelect.value;
   if (!id) return;
-  void replaceModule(async () => await catalog.create(id, context, sampleConfig(id)));
+  void replaceModule(async (signal) => await catalog.create(id, { ...context, signal }, sampleConfig(id)));
 }
 
 function loadUrlModel(): void {
@@ -726,20 +761,69 @@ function loadUrlModel(): void {
     asset,
     info: { name: asset.split('/').at(-1) || 'URL 模型', category: 'Blender URL 导入' },
   };
-  void replaceModule(async () => await catalog.create('external-gltf-model', context, modelConfig));
+  void replaceModule(async (signal) => await catalog.create('external-gltf-model', { ...context, signal }, modelConfig));
 }
 
 $('#create').addEventListener('click', createSelectedModule);
-$('#remove').addEventListener('click', () => { clearActiveModule(); setError(); });
+$('#remove').addEventListener('click', () => { cancelPendingLoad(); clearActiveModule(); setError(); });
 $('#apply-transform').addEventListener('click', applyTransform);
 filter.addEventListener('change', renderDefinitionOptions);
 definitionSelect.addEventListener('change', updateDefaultFields);
 $('#load-url').addEventListener('click', loadUrlModel);
+// ---------------- 整屋实时模块 ----------------
+const liveStatus = $('#live-status');
+const liveSelect = $<HTMLSelectElement>('#live-module');
+const liveFilter = $<HTMLInputElement>('#live-filter');
+
+function renderLiveList(): void {
+  const runtime = liveRuntime();
+  liveSelect.replaceChildren();
+  if (!runtime) {
+    liveStatus.textContent = '未连接整屋：请从整屋主界面右上角的「原子模块预览」打开本页。';
+    return;
+  }
+  const modules = runtime.moduleHost.modules();
+  const keyword = liveFilter.value.trim().toLowerCase();
+  const shown = modules.filter((m) => !keyword || [m.id, m.info.name, m.info.room ?? ''].some((text) => String(text).toLowerCase().includes(keyword)));
+  liveStatus.textContent = `已连接整屋运行时：共 ${modules.length} 个模块，显示 ${shown.length} 个。选中后可直接操作整屋中的实例。`;
+  for (const m of shown) {
+    const option = document.createElement('option');
+    option.value = m.id;
+    option.textContent = `${m.info.name} · ${m.kind === 'device' ? '设备' : m.kind === 'furniture' ? '家具' : '导入模型'} · ${m.id}`;
+    liveSelect.append(option);
+  }
+}
+
+function inspectLive(id: string): void {
+  const module = liveRuntime()?.moduleHost.get(id);
+  if (!module || module.disposed) { setError('整屋中已没有这个模块，请刷新列表。'); return; }
+  cancelPendingLoad();
+  clearActiveModule();
+  liveModule = module;
+  setError();
+  renderModuleControls(module);
+  renderAnimation(module);
+  labelElement.textContent = `整屋实时：${module.info.name} · ${module.id}`;
+  syncTransformFields();
+  refreshDetails();
+}
+
+liveSelect.addEventListener('change', () => { if (liveSelect.value) inspectLive(liveSelect.value); });
+liveFilter.addEventListener('input', renderLiveList);
+$('#live-refresh').addEventListener('click', renderLiveList);
+$('#live-locate').addEventListener('click', () => {
+  const runtime = liveRuntime();
+  if (!runtime || !liveModule || liveModule.disposed) { setError('先在列表中选中一个整屋模块。'); return; }
+  runtime.selection.select(liveModule.root);
+  runtime.rig.focus(liveModule.root);
+});
+renderLiveList();
+
 $('#choose-file').addEventListener('click', () => ($('#file') as HTMLInputElement).click());
 ($('#file') as HTMLInputElement).addEventListener('change', (event) => {
   const file = (event.currentTarget as HTMLInputElement).files?.[0];
   if (!file) return;
-  void replaceModule(async () => await createExternalModelModuleFromFile(file));
+  void replaceModule(async (signal) => await createExternalModelModuleFromFile(file, signal));
 });
 
 function resize(): void {
@@ -761,7 +845,7 @@ renderer.setAnimationLoop(() => {
   orbit.update();
   lightPool.update(camera);
   renderer.render(scene, camera);
-  if (activeModule) refreshDetails();
+  if (inspected()) refreshDetails();
 });
 
 window.addEventListener('beforeunload', () => {

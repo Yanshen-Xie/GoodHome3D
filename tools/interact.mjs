@@ -12,7 +12,7 @@ await page.waitForTimeout(1500);
 let pass = 0, fail = 0;
 const ok = (name, cond) => { console.log(cond ? 'PASS' : 'FAIL', name); cond ? pass++ : fail++; };
 const screenPos = (id) => page.evaluate((id) => {
-  const o = app.devices.byId[id].object;
+  const o = app.devices.registry.getModule(id).root;
   const v = o.getWorldPosition(new app.camera.position.constructor()).add({ x: 0.1, y: 0.12, z: 0 }).project(app.camera);
   return { x: (v.x + 1) / 2 * innerWidth, y: (1 - v.y) / 2 * innerHeight };
 }, id);
@@ -27,7 +27,7 @@ let title = await page.textContent('#info h2').catch(() => null);
 ok('点击空调弹出信息卡片（' + title + '）', title === '客厅空调');
 await page.click('#info .switch span');
 await page.waitForTimeout(300);
-ok('信息卡片开关控制空调', await page.evaluate(() => app.devices.byId['ac-living'].on));
+ok('信息卡片开关控制空调', await page.evaluate(() => app.devices.registry.getClimate('ac-living').isOn()));
 // 2. 楼层切换按钮
 await page.click('.floor-switch button:has-text("一层")');
 await page.waitForTimeout(300);
@@ -40,14 +40,14 @@ await page.evaluate(() => { app.rig.flyTo([3.1, 5.0, 0.4], [2.75, 1.2, -4.0], 0.
 await page.waitForTimeout(800);
 await page.evaluate(() => app.selection.selectDevice('elevator', false));
 await page.waitForTimeout(300);
-await page.click('#info button:has-text("呼叫到 2 层")');
+await page.click('#info button:has-text("呼叫到二层")');
 await page.waitForTimeout(9000);
-ok('电梯呼叫到 2 层（当前高度 ' + (await page.evaluate(() => app.devices.elevator.y.toFixed(2))) + ' m）', await page.evaluate(() => Math.abs(app.devices.elevator.y - 3.2) < 0.01));
+ok('电梯呼叫到 2 层（当前楼层 ' + (await page.evaluate(() => app.devices.registry.getElevator('elevator').getCurrentFloor() + 1)) + '）', await page.evaluate(() => { const e = app.devices.registry.getElevator('elevator'); return e.getCurrentFloor() === 1 && !e.isMoving(); }));
 // 4. 标签页 + 场景模式
 await page.click('#tabs button:has-text("智慧便捷")');
 await page.click('button:has-text("观影")');
 await page.waitForTimeout(500);
-ok('观影模式：电视开启、客厅灯调暗', await page.evaluate(() => app.features.smart.tvOn && app.devices.byId['light-living'].level < 0.3));
+ok('观影模式：电视开启、客厅灯调暗', await page.evaluate(() => app.home.tvOn && app.devices.registry.getLighting('light-living').getBrightness() < 0.3));
 await page.click('.dev-item[data-id="light-kid"]');
 await page.waitForTimeout(400);
 ok('设备列表点击选中儿童房灯', (await page.textContent('#info h2')) === '儿童房吸顶灯');
@@ -86,7 +86,8 @@ await page.waitForTimeout(300);
 ok('Esc 退出漫游', await page.evaluate(() => app.rig.mode === 'orbit'));
 // 8. 人物能上下楼：让妈妈走到二楼儿童房
 const up = await page.evaluate(() => { const m = app.people.mom; m.mode = 'stop'; m.path = []; m.setPosition(-6.0, 2.0, 0); return m.goTo(6.0, -3.0, { floor: 1 }); });
-await page.waitForTimeout(25000);
+// 路线约 30 m，正常步速约 25~30 秒走到；最多等 45 秒，到达即判定
+await page.waitForFunction(() => app.people.mom.floor === 1 && app.people.mom.room === 'kid' && !app.people.mom.path.length, null, { timeout: 45000 }).catch(() => {});
 ok('人物从一层客厅沿楼梯走到二楼儿童房（规划成功 ' + up + '，楼层 ' + (await page.evaluate(() => app.people.mom.floor)) + '，房间 ' + (await page.evaluate(() => app.people.mom.room)) + '）', up && await page.evaluate(() => app.people.mom.floor === 1 && app.people.mom.room === 'kid'));
 ok('无页面错误', errors.length === 0);
 if (errors.length) console.log(errors);

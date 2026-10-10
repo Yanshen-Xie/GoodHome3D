@@ -11,9 +11,20 @@ import * as THREE from 'three';
 import { getTexture } from '../scene/textures.js';
 
 /** 解析 MTL 文本，返回 { 材质名: {Kd, Ks, Ns, d, map_Kd} } */
+/** MTL 里一个材质的原始参数 */
+interface MtlMaterial {
+  name: string;
+  Kd?: number[];
+  Ks?: number[];
+  Ka?: number[];
+  Ns?: number;
+  d?: number;
+  map_Kd?: string;
+}
+
 export function parseMTL(text) {
-  const out = {};
-  let cur = null;
+  const out: Record<string, MtlMaterial> = {};
+  let cur: MtlMaterial | null = null;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
@@ -55,7 +66,7 @@ export function toMaterial(m) {
  * 多边形面按"扇形"拆成三角形：(v0,v1,v2), (v0,v2,v3), ...
  */
 export function parseOBJ(text, mtl = {}) {
-  const P = [], T = [], N = [];
+  const P: number[] = [], T: number[] = [], N: number[] = [];
   const buckets = new Map(); // 材质名 -> { pos:[], uv:[], nor:[] }
   let current = 'default';
   const bucket = () => {

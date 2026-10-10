@@ -31,6 +31,7 @@ export function createHouseCurtain(
   context: HouseCurtainFactoryContext,
   config: HouseCurtainConfig,
 ): SceneModule {
+  if (config.kind !== 'curtain') throw new Error('Curtain factory requires kind "curtain": ' + config.id);
   if (!config.id.trim() || !config.name.trim() || !config.room.trim()) {
     throw new Error('Curtain id, name and room are required');
   }

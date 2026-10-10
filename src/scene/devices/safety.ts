@@ -1,5 +1,6 @@
-import { INDOOR_ROOMS } from '../layout.js';
+import { INDOOR_ROOMS, ceilingMountSpot, wallMountSpot } from '../layout.js';
 import type { DeviceAssemblyContext, DeviceFacing } from '../deviceAssemblyContext.js';
+import type { HouseDeviceType } from '../deviceAssemblies.js';
 import type { SceneModuleContract } from '../../modules/contracts.js';
 import {
   createHouseCamera,
@@ -41,18 +42,24 @@ export function buildSafetyDevices(context: DeviceAssemblyContext): void {
     position,
     ...(facing ? { rotation: [0, context.facing[facing], 0] as const } : {}),
   });
-  const register = (module: SceneModuleContract, type: string, room?: string | null, floor?: number) =>
-    registerModule(module, { type, kind: String(module.getCapability<string>('deviceKind') ?? type), room, floor });
+  const register = (module: SceneModuleContract, type: HouseDeviceType, room?: string | null, floor?: number) =>
+    registerModule(module, { type, room, floor });
 
   // 房间坐标只在装配层决定；传感器工厂只负责一只传感器的模型、状态和接口。
   for (const room of INDOOR_ROOMS) {
+    // 挂墙传感器：优先东墙、距北端 0.5 m、离地 1.5 m；该处是门窗洞口或没有墙时，顺延到最近的实墙
+    const envSpot = wallMountSpot(room, 1.5);
+    if (!envSpot) throw new Error('房间没有可安装环境传感器的实墙：' + room.id);
+    // 吸顶传感器：优先西北角；落在楼梯洞、电梯井上方时换到其他角
+    const ceilingSpot = ceilingMountSpot(room);
+    if (!ceilingSpot) throw new Error('房间没有可安装人体存在传感器的天花板：' + room.id);
     const env = {
       kind: 'environmentSensor' as const,
       id: 'env-' + room.id,
       name: '温湿度 / PM2.5 传感器',
       room: room.id,
       floor: room.floor,
-      pose: pose([room.x1 - 0.12, context.floorY(room.floor) + 1.5, room.z0 + 0.5], '-x'),
+      pose: pose([envSpot.x, context.floorY(room.floor) + 1.5, envSpot.z], envSpot.facing),
       info: { category: '智慧 / 传感器', func: '每 10 秒上报温度、湿度、PM2.5、CO₂', data: {} },
     };
     register(createHouseEnvironmentSensor(env), 'envSensor', env.room, env.floor);
@@ -63,7 +70,7 @@ export function buildSafetyDevices(context: DeviceAssemblyContext): void {
       name: '毫米波人体存在传感器',
       room: room.id,
       floor: room.floor,
-      pose: pose([room.x0 + 0.4, context.ceilingY(room.floor) - 0.01, room.z0 + 0.4]),
+      pose: pose([ceilingSpot.x, context.ceilingY(room.floor) - 0.01, ceilingSpot.z]),
       info: {
         category: '智慧 / 传感器',
         func: '检测房间内是否有人、人的位置和姿态，用于灯光联动与跌倒检测（不拍摄图像，保护隐私）',
@@ -241,13 +248,11 @@ export function buildSafetyDevices(context: DeviceAssemblyContext): void {
   register(createHouseIntercom(intercom), 'intercom', intercom.room, intercom.floor);
 
   const lockConfig: HouseSmartLockConfig = {
-    kind: 'smartLock', id: 'smart-lock', name: '智能门锁', room: 'hall1', floor: 0, initiallyLocked: true,
+    kind: 'smartLock', id: 'smart-lock', name: '智能门锁', room: 'hall1', floor: 0, initiallyLocked: true, doorId: 'door-entry',
     pose: { position: [0.85, 0.95, 0.045] },
     info: { category: '智慧 / 安防', func: '指纹 / 人脸 / 手机开锁；火灾时自动解锁便于疏散', data: { 状态: '已上锁', 电量: '86%' } },
   };
-  const lock = createHouseSmartLock(lockConfig);
-  if (assembly.entryDoorPivot) lock.mount(assembly.entryDoorPivot);
-  register(lock, 'lock', lockConfig.room, lockConfig.floor);
+  register(createHouseSmartLock(lockConfig, { openings: assembly.openings }), 'lock', lockConfig.room, lockConfig.floor);
 
   const cameraConfigs: readonly HouseCameraConfig[] = [
     { kind: 'camera', id: 'camera', name: '门口摄像头', room: null, floor: 0, pose: pose([-8.14, 2.5, 1.1], '-x'), info: { category: '智慧 / 安防', func: 'AI 摄像头：离家模式下自动布防，识别人形入侵并推送提醒、联动灯光与声光报警', data: { 状态: '在线' } } },

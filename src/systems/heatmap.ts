@@ -19,7 +19,7 @@ export function colorMap(t) {
       return c0.map((v, k) => Math.round(v + (c1[k] - v) * f));
     }
   }
-  return stops.at(-1)[1];
+  return stops[stops.length - 1][1];
 }
 
 /** 每层一张热力图（floor = 0 或 1） */
@@ -125,7 +125,7 @@ export class Heatmap {
     // 先把密度画到一张小图上，再放大绘制（浏览器双线性插值使其平滑）
     const small = document.createElement('canvas');
     small.width = this.dw; small.height = this.dh;
-    const sg = small.getContext('2d');
+    const sg = small.getContext('2d')!;
     const img = sg.createImageData(this.dw, this.dh);
     for (let k = 0; k < this.density.length; k++) {
       const t = Math.sqrt(this.density[k] / max); // 开方让低频区域也能看出差别

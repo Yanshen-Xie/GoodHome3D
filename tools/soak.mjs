@@ -9,7 +9,7 @@ const errors = [];
 page.on('pageerror', (e) => { errors.push(e.message); console.log('[pageerror]', e.message); });
 await page.goto(url);
 await page.waitForFunction(() => window.app && !document.getElementById('loading'), null, { timeout: 90000 });
-await page.evaluate(() => { app.clock.speed = 1200; app.clock.playing = true; app.activateTab('smart'); app.features.smart.setMode('auto'); app.rig.flyTo([24, 16, 28], [0, 3, 0], 0.1); });
+await page.evaluate(() => { app.setPlaying(true, 1200); app.activateTab('smart'); app.features.smart.setMode('auto'); app.rig.flyTo([24, 16, 28], [0, 3, 0], 0.1); });
 const last = {};
 const still = {};
 const problems = [];

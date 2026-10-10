@@ -9,16 +9,19 @@ import { STATUS_COLOR, STATUS_TEXT } from '../scene/devices.js';
 import { Emitter } from '../systems/particles.js';
 import { StatusPins } from '../systems/statusPins.js';
 import { section, button, buttonGroup, logBox, chart, chartBase, hint, el, toast, toggle } from '../ui/ui.js';
+import type { SmartServices } from './services.js';
 
 const MODES = [
   { value: 'home', label: '🏠 回家' }, { value: 'away', label: '🚪 离家' }, { value: 'sleep', label: '🌙 睡眠' },
   { value: 'movie', label: '🎬 观影' }, { value: 'auto', label: '👣 自动感应' },
 ];
 
+const modeLabel = (value: string) => MODES.find((x) => x.value === value)?.label ?? value;
+
 export class SmartFeature {
   // Fields are declared here and initialized by the existing runtime flow.
   declare alarmTime: any;
-  declare app: any;
+  declare app: SmartServices;
   declare autoRainClose: any;
   declare devHtml: any;
   declare devList: any;
@@ -51,7 +54,7 @@ export class SmartFeature {
   declare twin: any;
   declare twinToggle: any;
 
-  constructor(app) {
+  constructor(app: SmartServices) {
     this.app = app;
     this.mode = 'auto';
     this.tvOn = false;
@@ -93,7 +96,7 @@ export class SmartFeature {
     const dark = app.sunFactor < 0.25 || app.clock.hour < 7 || app.clock.hour > 18.5;
     const curtains = registry.byType('curtain');
     const acs = registry.byType('ac');
-    const changes = [];
+    const changes: string[] = [];
     const allLights = (on) => registry.byType('light').forEach((light) => registry.setPower(light.id, on));
     registry.setPower('night-light', false);
     registry.setPower('lamp-floor', false);
@@ -102,10 +105,10 @@ export class SmartFeature {
     if (m !== 'away') this.bringPeopleHome();
     if (m === 'home') {
       registry.getLock('smart-lock')?.setLocked(false);
-      setTimeout(() => { if (this.mode === 'home') registry.getLock('smart-lock')?.setLocked(true); }, 5000);
+      this.app.later(() => { if (this.mode === 'home') registry.getLock('smart-lock')?.setLocked(true); }, 5000);
       allLights(false);
       if (dark) {
-        for (const [id, brightness, kelvin] of [['light-hall1-w', 0.8, 4000], ['light-living', 0.85, 3500], ['light-dining', 0.7, 3200], ['light-stair', 0.6, 3500]]) {
+        for (const [id, brightness, kelvin] of [['light-hall1-w', 0.8, 4000], ['light-living', 0.85, 3500], ['light-dining', 0.7, 3200], ['light-stair', 0.6, 3500]] as const) {
           const light = registry.getLighting(id);
           light?.setBrightness(brightness); light?.setColorTemperature(kelvin); light?.setOn(true);
         }
@@ -125,7 +128,7 @@ export class SmartFeature {
       ventilation?.setLevel(1); ventilation?.setOn(true);
       registry.getLock('smart-lock')?.setLocked(true);
       registry.getValve('gas-valve')?.setOpen(false);
-      for (const w of (Object.values(app.house.windows) as any[])) if (w.op.kind === 'window') w.setOpen(false);
+      for (const w of app.openings.list('window')) w.setOpen(false);
       registry.setInfoData('camera', '状态', '已布防');
       changes.push('全部灯光关闭', '窗帘、门窗关闭', '空调关闭', '新风低速 1 档', '燃气阀门关闭', '门锁上锁，摄像头布防');
       this.sendPeopleOut();
@@ -133,7 +136,7 @@ export class SmartFeature {
       allLights(false);
       registry.setPower('night-light', true);
       curtains.forEach((c) => registry.setCurtain(c.id, 0));
-      acs.forEach((a) => { const climate = registry.getClimate(a.id); climate?.setSetpoint(27); climate?.setOn(['master', 'kid', 'elder'].includes(a.room)); });
+      acs.forEach((a) => { const climate = registry.getClimate(a.id); climate?.setSetpoint(27); climate?.setOn(['master', 'kid', 'elder'].includes(a.room ?? '')); });
       const ventilation = registry.getVentilation('fresh-air');
       ventilation?.setLevel(1); ventilation?.setOn(true);
       registry.getLock('smart-lock')?.setLocked(true);
@@ -149,7 +152,7 @@ export class SmartFeature {
       movieClimate?.setSetpoint(25); movieClimate?.setOn(true);
       this.setTV(true);
       changes.push('客厅主灯调暗至 18%、暖光 2700K', '落地灯开启', '客厅窗帘关闭', '电视开启', '客厅空调 25℃');
-      app.rig.flyTo([-7.3, 1.7, 4.4], [-3.4, 1.3, 2.5]);
+      app.flyTo([-7.3, 1.7, 4.4], [-3.4, 1.3, 2.5]);
       app.viewFloor('all');
     } else if (m === 'auto') {
       allLights(false);
@@ -157,10 +160,10 @@ export class SmartFeature {
       changes.push('人体存在传感器接管灯光：有人且光线不足时开灯，人离开 3 秒后关灯', '走廊灯随人员移动依次亮起');
     }
     registry.setInfoData('camera', '状态', m === 'away' ? '已布防' : '在线');
-    this.logBox.add(this.clock(), `切换到【${MODES.find((x) => x.value === m).label.slice(2).trim()}】模式`, 'ok');
+    this.logBox.add(this.clock(), `切换到【${modeLabel(m).slice(2).trim()}】模式`, 'ok');
     for (const c of changes) this.logBox.add('', '　- ' + c);
     this.modeBtns?.refresh();
-    toast(`已切换到${MODES.find((x) => x.value === m).label}模式`);
+    toast(`已切换到${modeLabel(m)}模式`);
   }
 
   clock() {
@@ -175,21 +178,22 @@ export class SmartFeature {
       // 走到门外时如果还是"离家"模式就隐藏；中途切换了模式则留在原地，由 bringPeopleHome 叫回
       p.goTo(-10.5, -0.2, { floor: 0, onArrive: () => { if (this.mode === 'away') { p.object.visible = false; p.activity = '不在家'; } } });
     }
-    this.app.house.doors['door-entry'].setOpen(true);
-    setTimeout(() => this.app.house.doors['door-entry'].setOpen(false), 25000);
+    const entry = this.app.openings.require('door-entry');
+    entry.setOpen(true);
+    this.app.later(() => entry.setOpen(false), 25000);
   }
 
   bringPeopleHome() {
-    const app = this.app;
+    const app = this.app, entry = app.openings.require('door-entry');
     app.people.list.forEach((p, i) => {
       const leaving = p.activity === '出门' || p.activity === '不在家';
       if (p.object.visible && !leaving) return;
       if (!p.object.visible) { p.object.visible = true; p.setPosition(-11 - i * 0.8, -0.2 + i * 0.3, 0); }
-      app.house.doors['door-entry'].setOpen(true);
+      entry.setOpen(true);
       p.mode = 'stop';
       p.activity = '回家';
       p.goTo(-6.3 + i * 1.2, 2.0, { floor: 0, onArrive: () => { p.mode = 'routine'; p.waitTimer = 3; } });
-      setTimeout(() => app.house.doors['door-entry'].setOpen(false), 9000);
+      this.app.later(() => entry.setOpen(false), 9000);
     });
     for (const p of app.people.list) if (p.mode === 'stop' && p.object.visible && !p.path.length) p.mode = 'routine';
   }
@@ -256,7 +260,7 @@ export class SmartFeature {
     this.gas.start();
     this.logBox.add(this.clock(), '厨房燃气管道接口泄漏（模拟）', 'err');
     app.viewFloor(0);
-    app.rig.flyTo([3.4, 5.2, 5.8], [6.8, 1.2, 1.8]);
+    app.flyTo([3.4, 5.2, 5.8], [6.8, 1.2, 1.8]);
   }
 
   gasTimeline(dt) {
@@ -269,7 +273,7 @@ export class SmartFeature {
     gasSensor?.setValue(this.gasLevel);
     once('warn', { cond: () => this.gasLevel >= (gasSensor?.getAlarmThreshold() ?? 10), run: () => { this.logBox.add(this.clock(), `可燃气体探测器预警：${this.gasLevel.toFixed(0)}%LEL`, 'warn'); } });
     once('alarm', {
-      cond: () => this.gasLevel >= (gasSensor?.getFaultThreshold() ?? 20),
+      cond: () => this.gasLevel >= (gasSensor?.getFaultThreshold?.() ?? 20),
       run: () => {
         this.gasAlarm = true;
         registry.getFireAlarm('strobe-kitchen')?.activate();
@@ -281,7 +285,7 @@ export class SmartFeature {
     once('window', {
       cond: () => this.gasSteps.has('valve') && T > this.alarmAt() + 1.5,
       run: () => {
-        app.house.windows['w-kitchen-e'].setOpen(true); app.house.windows['w-kitchen-s'].setOpen(true);
+        for (const id of ['w-kitchen-e', 'w-kitchen-s']) app.openings.require(id).setOpen(true);
         this.gasVent = true;
         this.logBox.add(this.clock(), '联动 2：打开厨房外窗，启动排风（禁止开关电器，防止电火花）', 'warn');
       },
@@ -311,19 +315,18 @@ export class SmartFeature {
     app.devices.registry.setStatus('gas-valve', 'normal');
     app.devices.registry.getValve('gas-valve')?.setOpen(true);
     app.devices.registry.getFireAlarm('strobe-kitchen')?.deactivate();
-    if (!silent) { app.house.windows['w-kitchen-e'].setOpen(false); app.house.windows['w-kitchen-s'].setOpen(false); this.logBox.add(this.clock(), '燃气系统检修完成，复位', 'ok'); }
+    if (!silent) { for (const id of ['w-kitchen-e', 'w-kitchen-s']) app.openings.require(id).setOpen(false); this.logBox.add(this.clock(), '燃气系统检修完成，复位', 'ok'); }
   }
 
   // 夜间窗户透光：窗户所在房间开着灯时，外侧发光面变亮（亮度跟随灯的亮度和色温）
   windowGlow() {
-    const app = this.app, dark = app.sunFactor < 0.3;
-    for (const w of (Object.values(app.house.windows) as any[])) {
-      if (!w.glow) continue;
-      const lamps = app.devices.registry.byType('light').filter((l) => l.room === w.op.room && app.devices.registry.getPower(l.id)?.isOn());
-      const level = dark && lamps.length ? Math.max(...lamps.map((l) => app.devices.registry.getLighting(l.id)?.getBrightness() ?? 0)) : 0;
-      w.glow.material.opacity = Math.min(0.95, 0.35 + level * 0.65) * (level > 0 ? 1 : 0);
-      const color = lamps[0] && app.devices.registry.getLighting(lamps[0].id)?.getSourceColor?.();
-      if (color) w.glow.material.color.copy(color).lerp(new THREE.Color(0xffc070), 0.4);
+    const app = this.app, dark = app.sunFactor < 0.3, registry = app.devices.registry;
+    for (const w of app.openings.list(['window', 'slide'])) {
+      if (!w.setNightGlow) continue;
+      const lamps = registry.byType('light').filter((l) => l.room === w.room && registry.getPower(l.id)?.isOn());
+      const level = dark && lamps.length ? Math.max(...lamps.map((l) => registry.getLighting(l.id)?.getBrightness() ?? 0)) : 0;
+      const color = lamps[0] && registry.getLighting(lamps[0].id)?.getSourceColor?.();
+      w.setNightGlow(Math.min(0.95, 0.35 + level * 0.65) * (level > 0 ? 1 : 0), color ? color.clone().lerp(new THREE.Color(0xffc070), 0.4) : undefined);
     }
   }
 
@@ -331,7 +334,7 @@ export class SmartFeature {
   rainControl() {
     const app = this.app;
     if (!this.autoRainClose || app.clock.weather !== 'rainy') return;
-    const open = (Object.values(app.house.windows) as any[]).filter((w) => w.isOpen && w.op.kind === 'window');
+    const open = app.openings.list('window').filter((w) => w.isOpen());
     if (!open.length) return;
     for (const w of open) w.setOpen(false);
     this.logBox.add(this.clock(), `雨量传感器检测到下雨 → 自动关闭 ${open.length} 扇外窗`, 'warn');
@@ -352,7 +355,7 @@ export class SmartFeature {
     app.scene.add(this.puddle);
     this.logBox.add(this.clock(), '二层卫生间洗手台下水管接口漏水（模拟）', 'err');
     app.viewFloor(1);
-    app.rig.flyTo([0.6, 8.2, -0.6], [-1.4, 3.3, -3.2]);
+    app.flyTo([0.6, 8.2, -0.6], [-1.4, 3.3, -3.2]);
   }
 
   leakTimeline(dt) {
@@ -390,11 +393,11 @@ export class SmartFeature {
     const app = this.app, env = app.envModel;
     env.haze = 1;
     app.setTime(app.clock.hour);
-    for (const w of (Object.values(app.house.windows) as any[])) if (w.op.kind === 'window') w.setOpen(true);
+    for (const w of app.openings.list('window')) w.setOpen(true);
     app.devices.registry.getVentilation('fresh-air')?.setOn(false);
     this.hazeWatch = true;
     this.logBox.add(this.clock(), '室外出现雾霾，PM2.5 升高（模拟）；当前门窗打开、新风关闭', 'warn');
-    app.features.layers.setHeatmap('pm', 0);
+    app.heatmap.setHeatmap('pm', 0);
   }
 
   hazeControl() {
@@ -403,7 +406,7 @@ export class SmartFeature {
     const worst = Math.max(...ROOMS.map((r) => env.rooms[r.id].pm));
     if (!this.hazeActed && worst > 60) {
       this.hazeActed = true;
-      for (const w of (Object.values(app.house.windows) as any[])) w.setOpen(false);
+      for (const w of app.openings.list(['window', 'slide'])) w.setOpen(false);
       const ventilation = app.devices.registry.getVentilation('fresh-air');
       ventilation?.setLevel(3); ventilation?.setOn(true);
       this.logBox.add(this.clock(), `室内 PM2.5 达 ${worst.toFixed(0)} μg/m³（超过 60）→ 自动关闭门窗，新风 3 档运行（H13 高效过滤）`, 'warn');
@@ -430,8 +433,8 @@ export class SmartFeature {
       // 收集建筑和家具用到的所有材质
       const set = new Set<THREE.Material>(), outdoor = new Set<THREE.Material>();
       // 室外环境（树、草地）也用到了一些相同的材质，这些材质不做透明化，否则树冠会一起"消失"
-      app.env.group.traverse((o) => { const mesh = o as THREE.Mesh; if (mesh.isMesh) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => outdoor.add(m)); });
-      for (const root of [app.house.root, app.furniture.root]) root.traverse((o) => { const mesh = o as THREE.Mesh; if (mesh.isMesh) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => { if (!outdoor.has(m)) set.add(m); }); });
+      app.sceneLayers.outdoor.traverse((o) => { const mesh = o as THREE.Mesh; if (mesh.isMesh) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => outdoor.add(m)); });
+      for (const root of [app.sceneLayers.house, app.sceneLayers.furniture]) root.traverse((o) => { const mesh = o as THREE.Mesh; if (mesh.isMesh) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => { if (!outdoor.has(m)) set.add(m); }); });
       this.fadeMats = [...set].map((m) => ({ m, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite }));
     }
     for (const f of this.fadeMats) {
@@ -440,7 +443,7 @@ export class SmartFeature {
       f.m.depthWrite = on ? false : f.depthWrite;
       f.m.needsUpdate = true;
     }
-    if (on) { app.viewFloor(1); app.rig.flyTo([14, 16, 18], [1, 1.5, 0]); }
+    if (on) { app.viewFloor(1); app.flyTo([14, 16, 18], [1, 1.5, 0]); }
     this.twinToggle?.refresh();
   }
 
@@ -453,14 +456,15 @@ export class SmartFeature {
     const module = device.module;
     if (!module) return;
     const info = module.info;
-    const faults = {
+    const faultTable: Record<string, [string, string]> = {
       heatpump: ['压缩机排气温度过高（E4）', '水箱温度 38℃，制热效率下降'],
       'fresh-air': ['送风机转速异常（1200 → 450 rpm）', '疑似滤网严重堵塞'],
       inverter: ['直流侧绝缘阻抗低（PV2 组串）', '发电功率下降 35%'],
       distribution: ['厨房回路漏电流 28mA（接近 30mA 保护值）', '建议检查厨房电器插座'],
       'ac-master': ['室外机通信故障（E6）', '空调停止运行'],
       elevator: ['轿厢门锁回路异常，电梯停在 1 层', '已自动停梯，禁止使用，老人上下楼请走楼梯（有人陪同）'],
-    }[id];
+    };
+    const faults = faultTable[id];
     this.setTwin(true);
     registry.setStatus(id, 'fault');
     registry.mergeInfoData(id, { 故障: faults[0], 影响: faults[1] });
@@ -471,10 +475,10 @@ export class SmartFeature {
     this.logBox.add(this.clock(), `【故障】${info.name}：${faults[0]}`, 'err');
     this.logBox.add('', '　- 系统已自动定位故障设备并生成维修工单，其余构件透明化显示');
     toast('⚠ 设备故障：' + info.name, 'alarm', 3500);
-    setTimeout(() => {
+    this.app.later(() => {
       app.selection.selectDevice(id, false);
       const p = module.root.getWorldPosition(new THREE.Vector3());
-      app.rig.flyTo([p.x + 7, p.y + 8, p.z + 9], p.toArray()); // 镜头飞到故障设备附近（保持一定距离，能看到周围）
+      app.flyTo([p.x + 7, p.y + 8, p.z + 9], p.toArray()); // 镜头飞到故障设备附近（保持一定距离，能看到周围）
     }, 300);
   }
 
@@ -501,10 +505,10 @@ export class SmartFeature {
     this.modeBtns = buttonGroup(MODES, () => this.mode, (v) => this.setMode(v));
     s1.append(this.modeBtns);
     s1.append(el('div', { class: 'btns', style: 'margin-top:6px' },
-      button('时间设为晚上 8 点', () => { app.setTime(20); app.syncTime(); }),
-      button('时间设为上午 10 点', () => { app.setTime(10); app.syncTime(); }),
-      button('一层俯视', () => { app.viewFloor(0); app.rig.flyTo([0, 24, 10], [0, 0, 0.5]); }),
-      button('二层俯视', () => { app.viewFloor(1); app.rig.flyTo([0, 27, 10], [0, 3.2, 0.5]); }),
+      button('时间设为晚上 8 点', () => app.setTime(20)),
+      button('时间设为上午 10 点', () => app.setTime(10)),
+      button('一层俯视', () => { app.viewFloor(0); app.flyTo([0, 24, 10], [0, 0, 0.5]); }),
+      button('二层俯视', () => { app.viewFloor(1); app.flyTo([0, 27, 10], [0, 3.2, 0.5]); }),
     ));
     root.append(s1);
 
@@ -524,7 +528,7 @@ export class SmartFeature {
     s3.append(el('div', { class: 'btns', style: 'margin-top:6px' },
       button('💧 模拟卫生间漏水', () => this.startLeak(), 'danger'),
       button('修复漏水', () => this.stopLeak()),
-      button('🌧 开窗后下雨', () => { for (const w of (Object.values(app.house.windows) as any[])) if (w.op.kind === 'window') w.setOpen(true); setTimeout(() => { app.clock.weather = 'rainy'; app.setTime(app.clock.hour); app.syncTime(); }, 2500); app.viewFloor('all'); app.rig.flyTo([20, 9, 22], [0, 3, 0]); }),
+      button('🌧 开窗后下雨', () => { for (const w of app.openings.list('window')) w.setOpen(true); this.app.later(() => app.setWeather('rainy'), 2500); app.viewFloor('all'); app.flyTo([20, 9, 22], [0, 3, 0]); }),
     ));
     this.autoRainClose = true;
     s3.append(toggle('下雨自动关窗（雨量传感器 + 窗磁）', () => this.autoRainClose, (v) => { this.autoRainClose = v; }));
@@ -551,7 +555,7 @@ export class SmartFeature {
     const list = registry.all().filter((d) => types.includes(d.type) && d.module);
     const html = list.map((d) => {
       const status = registry.getStatus(d.id) ?? 'normal';
-      let st = STATUS_TEXT[status];
+      let st: string = STATUS_TEXT[status];
       if (d.type === 'light') { const power = registry.getPower(d.id); const light = registry.getLighting(d.id); st = power?.isOn() ? `开 ${Math.round((light?.getBrightness() ?? 0) * 100)}% ${light?.getColorTemperature() ?? 4000}K` : '关'; }
       if (d.type === 'ac') { const climate = registry.getClimate(d.id); st = climate?.isOn() ? `运行 ${climate.getSetpoint()}℃` : '关'; }
       if (d.type === 'curtain') st = (registry.getCurtain(d.id)?.getOpenRatio() ?? 0) > 0.5 ? '打开' : '关闭';
@@ -587,7 +591,7 @@ export class SmartFeature {
     this.windowGlow();
     this.app.devices.registry.mergeInfoData('gateway', {
       在线设备: this.app.devices.registry.all().filter((d) => d.module).length + ' 台',
-      当前模式: MODES.find((m) => m.value === this.mode).label.slice(2).trim(),
+      当前模式: modeLabel(this.mode).slice(2).trim(),
     });
     if (!active) return;
     this.renderDevList();

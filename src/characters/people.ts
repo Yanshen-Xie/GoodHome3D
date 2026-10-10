@@ -29,6 +29,27 @@ const GRANDMA = [
   { f: 0, x: -5.4, z: -0.2, act: '在走廊散步', stay: 4 },
 ];
 
+/** 换色参数：色相范围 fromHue 内的像素换成 toHue，亮度乘 light */
+interface Tint { readonly fromHue: readonly [number, number]; readonly toHue: number; readonly light?: number }
+
+/** 作息表的一项：去第 f 层 (x, z) 做 act，停留 stay 秒 */
+interface ScheduleItem { readonly f: number; readonly x: number; readonly z: number; readonly act: string; readonly stay: number }
+
+interface PersonOptions {
+  scale?: number;
+  tint?: Tint | null;
+  speed?: number;
+  schedule?: readonly ScheduleItem[];
+  role?: string;
+}
+
+interface GoToOptions {
+  floor?: number;
+  run?: boolean;
+  avoidDanger?: boolean;
+  onArrive?: (() => void) | null;
+}
+
 /**
  * 贴图换色：把色相在 fromHue 范围内、饱和度较高的像素换成 toHue（HSL 颜色空间中只改色相和亮度）。
  */
@@ -36,7 +57,7 @@ function recolorTexture(tex, fromHue, toHue, lightMul = 0.9) {
   const img = tex.image;
   const c = document.createElement('canvas');
   c.width = img.width; c.height = img.height;
-  const g = c.getContext('2d', { willReadFrequently: true });
+  const g = c.getContext('2d', { willReadFrequently: true })!;
   g.drawImage(img, 0, 0);
   const data = g.getImageData(0, 0, c.width, c.height);
   const d = data.data;
@@ -80,8 +101,9 @@ class Person {
   declare schedule: any;
   declare waitTimer: any;
   declare walkSpeed: any;
+  declare standTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(name, model, clips, nav, { scale = 1, tint = null, speed = 1.1, schedule = [], role = '' } = {}) {
+  constructor(name, model, clips, nav, { scale = 1, tint = null, speed = 1.1, schedule = [], role = '' }: PersonOptions = {}) {
     this.name = name;
     this.nav = nav;
     this.schedule = schedule;
@@ -137,7 +159,7 @@ class Person {
   get z() { return this.object.position.z; }
 
   /** 规划路线并走过去；floor 为目标楼层 */
-  goTo(x, z, { floor = this.floor, run = false, avoidDanger = false, onArrive = null } = {}) {
+  goTo(x, z, { floor = this.floor, run = false, avoidDanger = false, onArrive = null }: GoToOptions = {}) {
     const p = this.nav.findPath({ x: this.x, z: this.z, floor: this.floor }, { x, z, floor }, { avoidDanger });
     if (!p) return false;
     this.path = p.slice(1);
@@ -148,7 +170,20 @@ class Person {
 
   /** 跌倒 / 起身（绕脚部旋转成躺倒姿势，并冻结动画） */
   fall() { this.mode = 'fallen'; this.path = []; this.fallTarget = 1; this.activity = '跌倒！'; }
-  standUp() { this.fallTarget = 0; this.activity = '已被扶起'; setTimeout(() => { if (this.mode === 'fallen') { this.mode = 'routine'; this.waitTimer = 3; } }, 1500); }
+  standUp() {
+    this.fallTarget = 0; this.activity = '已被扶起';
+    clearTimeout(this.standTimer);
+    this.standTimer = setTimeout(() => { if (this.mode === 'fallen') { this.mode = 'routine'; this.waitTimer = 3; } }, 1500);
+  }
+
+  /** 停止动画和待执行的起身计时，从场景移除 */
+  dispose() {
+    clearTimeout(this.standTimer);
+    this.mixer?.stopAllAction();
+    this.object.removeFromParent();
+    this.path = [];
+    this.onArrive = null;
+  }
 
   update(dt) {
     // 跌倒动画：身体绕 x 轴倒下，同时略微抬高避免陷进地面
@@ -274,5 +309,11 @@ export class People {
   update(dt) {
     if (this.paused) return;
     for (const p of this.all) p.update(dt);
+  }
+
+  dispose() {
+    for (const p of this.all ?? []) p.dispose();
+    this.list = [];
+    this.all = [];
   }
 }

@@ -19,7 +19,7 @@ export interface FurnitureModuleConfig {
   args?: unknown[];
 }
 
-let objModels = null;
+let objModels: { chair: THREE.Group; toilet: THREE.Group; pot: THREE.Group } | null = null;
 export function models() {
   if (!objModels) objModels = {
     chair: markSharedResources(loadOBJ(chairObj, chairMtl)),
@@ -148,7 +148,7 @@ export function officeChair() {
     box(0.42, 0.45, 0.05, 'fabricBlue', 0, 0.55, -0.2, { rounded: 0.02 }),
     cylinder(0.025, 0.025, 0.4, 'darkMetal', 0, 0.05, 0, 8),
   );
-  for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; g.add(box(0.28, 0.03, 0.04, 'darkMetal', Math.cos(a) * 0.14, 0.03, Math.sin(a) * 0.14)); g.children.at(-1).rotation.y = -a; }
+  for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; g.add(box(0.28, 0.03, 0.04, 'darkMetal', Math.cos(a) * 0.14, 0.03, Math.sin(a) * 0.14)); g.children[g.children.length - 1].rotation.y = -a; }
   return g;
 }
 
@@ -158,6 +158,20 @@ export function grabBar(len, vertical = false) {
   if (!vertical) m.rotation.z = Math.PI / 2;
   m.castShadow = true;
   return m;
+}
+
+/** 床边起身扶手：横杆 + 两根立柱 + 底座，立在床侧地面上（len 为横杆长度，h 为扶手高度），横杆沿局部 x 轴 */
+export function bedRail(len = 0.9, h = 0.75) {
+  const g = new THREE.Group();
+  const top = grabBar(len);
+  top.position.y = h;
+  g.add(top);
+  for (const s of [-1, 1]) {
+    const post = grabBar(h, true);
+    post.position.set(s * (len / 2 - 0.02), h / 2, 0);
+    g.add(post, box(0.12, 0.02, 0.1, 'darkMetal', s * (len / 2 - 0.02), 0, 0));
+  }
+  return g;
 }
 
 // 靠墙安装的连续扶手（走廊、卫生间）。x0/x1 为沿墙起止，axis 为墙方向
@@ -188,7 +202,7 @@ export function continuousHallwayRail() {
 // 装饰画：画框 + 用 Canvas 生成的抽象画
 export function painting(w, h, seed) {
   const c = document.createElement('canvas'); c.width = 256; c.height = Math.round(256 * h / w);
-  const g = c.getContext('2d');
+  const g = c.getContext('2d')!;
   let s = seed * 9301 + 49297;
   const r = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
   const palettes = [['#e9e1d3', '#c96f4a', '#2f4858', '#d9b26f'], ['#f2efe9', '#6b8f71', '#a3b18a', '#344e41'], ['#eee4da', '#355070', '#b56576', '#eaac8b']];
@@ -336,7 +350,7 @@ export function wallMirror() { return box(0.02, 0.8, 0.7, 'mirror', 0, 0, 0, { c
 
 export const furnitureFactories = {
   bed, sofa, table, cabinet, plant, books, bookshelf, rug, armchair, officeChair,
-  grabBar, wallRail: (pts, y) => { const g = new THREE.Group(); wallRail(g, pts, y); return g; },
+  grabBar, bedRail, wallRail: (pts, y) => { const g = new THREE.Group(); wallRail(g, pts, y); return g; },
   painting, bathtub, washer, stool, deskLamp,
   coffeeTable, tvPartition, southKitchenCounter, eastKitchenCounter, cooktop, rangeHood, refrigerator,
   kitchenUpperCabinet, kitchenIsland, showerZone, bathroomVanity, laundrySink, vanityWithMirror,
@@ -362,6 +376,7 @@ export const furniturePreviewSamples: ReadonlyArray<{
   { kind: 'armchair', label: '扶手椅', args: [] },
   { kind: 'officeChair', label: '办公椅', args: [] },
   { kind: 'grabBar', label: '安全抓杆', args: [0.9] },
+  { kind: 'bedRail', label: '床边起身扶手', args: [0.9, 0.75] },
   { kind: 'wallRail', label: '墙面扶手', args: [[[0, 0], [1.2, 0]], 0.85] },
   { kind: 'painting', label: '装饰画', args: [1.2, 0.8, 1] },
   { kind: 'bathtub', label: '浴缸', args: [] },

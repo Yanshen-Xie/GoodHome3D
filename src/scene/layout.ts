@@ -21,7 +21,19 @@ export const EXT = { x0: -8, x1: 8, z0: -5, z1: 5 };
 export const FLOORS = [{ id: 0, name: '一层', y: 0 }, { id: 1, name: '二层', y: FLOOR_H }];
 
 // 房间：id、名称、楼层、范围、地面材质。outdoor 表示阳台等室外空间（不参与室内环境模拟）
-export const ROOMS = [
+export interface Room {
+  readonly id: string;
+  readonly name: string;
+  readonly floor: number;
+  readonly x0: number;
+  readonly x1: number;
+  readonly z0: number;
+  readonly z1: number;
+  readonly fl: string;
+  readonly outdoor?: boolean;
+}
+
+export const ROOMS: readonly Room[] = [
   // 一层
   { id: 'elder', name: '老人房', floor: 0, x0: -8, x1: -3.2, z0: -5, z1: -1, fl: 'woodFloor' },
   { id: 'bath1', name: '无障碍卫生间', floor: 0, x0: -3.2, x1: -0.6, z0: -5, z1: -1, fl: 'bathTile' },
@@ -44,16 +56,16 @@ export const ROOMS = [
 ];
 export const INDOOR_ROOMS = ROOMS.filter((r) => !r.outdoor);
 
-export function roomById(id) {
+export function roomById(id: string | null | undefined): Room | undefined {
   return ROOMS.find((r) => r.id === id);
 }
 
 /** 点 (x,z) 在第 floor 层所在的房间；不在室内返回 null */
-export function roomAt(x, z, floor = 0) {
+export function roomAt(x: number, z: number, floor = 0): Room | null {
   return ROOMS.find((r) => r.floor === floor && x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1) ?? null;
 }
 
-export function roomCenter(r) {
+export function roomCenter(r: Room) {
   return { x: (r.x0 + r.x1) / 2, z: (r.z0 + r.z1) / 2, y: FLOORS[r.floor].y };
 }
 
@@ -165,6 +177,56 @@ export function stairHeight(x, z) {
 
 // 家用电梯（适老）：井道位于楼梯间东侧，门朝南
 export const ELEVATOR = { x0: 2.2, x1: 3.3, z0: -4.9, z1: -3.4, doorX: 2.75 };
+
+// ---------------- 设备安装位置 ----------------
+export type WallSide = '+x' | '-x' | '+z' | '-z';
+
+/** 墙面安装点：设备中心离墙中心线 inset 米，facing 为设备朝向（指向房间内） */
+export interface WallSpot { x: number; z: number; facing: WallSide }
+
+const INWARD: Record<WallSide, WallSide> = { '+x': '-x', '-x': '+x', '+z': '-z', '-z': '+z' };
+
+/**
+ * 在房间某一侧的墙上找一处实墙安装点：该处有墙体，且高度 height 不落在任何门窗洞口内（洞口两侧各留 margin）。
+ * 按 sides 的顺序逐面尝试；每面墙从 start（距该面墙起点的距离）开始，向墙的另一端每 0.1 m 试一次。
+ */
+export function wallMountSpot(room: Room, height: number, sides: readonly WallSide[] = ['+x', '-x', '-z', '+z'],
+  { start = 0.5, margin = 0.2, inset = 0.12 } = {}): WallSpot | null {
+  for (const side of sides) {
+    const alongZ = side === '+x' || side === '-x';
+    const line = side === '+x' ? room.x1 : side === '-x' ? room.x0 : side === '+z' ? room.z1 : room.z0;
+    const [lo, hi] = alongZ ? [room.z0, room.z1] : [room.x0, room.x1];
+    const walls = WALLS.filter((w) => w.floor === room.floor && (alongZ
+      ? w.x1 === w.x2 && Math.abs(w.x1 - line) < 0.01
+      : w.z1 === w.z2 && Math.abs(w.z1 - line) < 0.01));
+    for (let t = lo + start; t <= hi - start + 1e-6; t += 0.1) {
+      const solid = walls.some((w) => {
+        const [a0, a1] = alongZ ? [Math.min(w.z1, w.z2), Math.max(w.z1, w.z2)] : [Math.min(w.x1, w.x2), Math.max(w.x1, w.x2)];
+        if (t < a0 + margin || t > a1 - margin) return false;
+        return !w.openings.some((op) => t > op.a - margin && t < op.b + margin && height > op.bottom - margin && height < op.top + margin);
+      });
+      if (!solid) continue;
+      const offset = side === '+x' || side === '+z' ? -inset : inset;
+      return alongZ ? { x: line + offset, z: t, facing: INWARD[side] } : { x: t, z: line + offset, facing: INWARD[side] };
+    }
+  }
+  return null;
+}
+
+/** 第 floor 层天花板上的楼板开洞（一层天花板有楼梯洞和电梯井，二层只有电梯井） */
+function ceilingHoles(floor: number) {
+  return floor === 0 ? [STAIR.hole, ELEVATOR] : [ELEVATOR];
+}
+
+/** 房间天花板上不落在楼板开洞里的安装点：依次尝试四个角（离两侧墙 inset 米） */
+export function ceilingMountSpot(room: Room, { inset = 0.4, margin = 0.15 } = {}): { x: number; z: number } | null {
+  const corners = [[room.x0 + inset, room.z0 + inset], [room.x1 - inset, room.z0 + inset], [room.x0 + inset, room.z1 - inset], [room.x1 - inset, room.z1 - inset]];
+  for (const [x, z] of corners) {
+    const inHole = ceilingHoles(room.floor).some((h) => x > h.x0 - margin && x < h.x1 + margin && z > h.z0 - margin && z < h.z1 + margin);
+    if (!inHole) return { x, z };
+  }
+  return null;
+}
 
 // 安全出口（室外一侧的集合点），疏散路径规划的目标（都在一层）
 export const EXITS = [

@@ -5,6 +5,7 @@ import { sectionPlane } from '../scene/common.js';
 import { METRICS } from '../systems/envModel.js';
 import { colorMap } from '../systems/heatmap.js';
 import { section, toggle, slider, buttonGroup, button, el } from '../ui/ui.js';
+import type { HeatmapControl, HeatmapMetric, LayersServices } from './services.js';
 
 // “三口之家 + 老人”一天的典型作息：[成员, 楼层, 地点(x,z), 小时, 是否睡眠]
 // 睡眠时基本不走动，按较低权重计入活动热力
@@ -15,21 +16,24 @@ const FAMILY_DAY: [string, number, [number, number], number, boolean?][] = [
   ['老人', 0, [-5.5, -3.5], 10, true], ['老人', 0, [-6.8, -1.9], 2.5], ['老人', 0, [-6.5, 3.2], 3], ['老人', 0, [0.8, 3.6], 1.5], ['老人', 0, [-1.9, -2.2], 1.0],
 ];
 
-export class LayersFeature {
+/** 热力图的局部差异源：在 (x, z) 半径 r 内把数值拉向 value */
+interface HeatSource { x: number; z: number; r: number; value: number; room: string; floor: number }
+
+export class LayersFeature implements HeatmapControl {
   // Fields are declared here and initialized by the existing runtime flow.
-  declare app: any;
-  declare cut: any;
+  declare app: LayersServices;
   declare cutSlider: any;
   declare groupBtns: any;
   declare legend: any;
-  declare metric: any;
+  declare metric: HeatmapMetric;
+  private readonly metricListeners: (() => void)[] = [];
   declare suggest: any;
   declare valueLabels: any;
 
-  constructor(app) {
+  constructor(app: LayersServices) {
     this.app = app;
     this.metric = 'none';
-    this.cut = null; // 手动剖切高度（null 表示按楼层显示）
+    app.onViewChange(() => this.cutSlider?.refresh());
     this.valueLabels = INDOOR_ROOMS.map((r) => {
       const c = roomCenter(r);
       const l = app.makeLabel('', 'room', c.x, c.y + 0.4, c.z);
@@ -66,32 +70,23 @@ export class LayersFeature {
     }
   }
 
-  setCut(h) {
-    this.cut = h >= 8.9 ? null : h;
-    this.applySection();
-  }
-
-  /** 剖切平面高度：手动剖切优先，否则按当前显示的楼层 */
-  applySection() {
-    sectionPlane.constant = this.cut ?? this.app.CUT[this.app.view];
-    this.cutSlider?.refresh();
-  }
+  onChange(listener: () => void) { this.metricListeners.push(listener); }
 
   /** 选择热力图：none | temp | rh | pm | co2 | noise | activity；floor 指定显示哪一层 */
-  setHeatmap(metric, floor?: number) {
+  setHeatmap(metric: HeatmapMetric, floor?: number) {
     this.metric = metric;
     for (const h of this.heatmaps) h.mesh.visible = metric !== 'none';
     for (const l of this.valueLabels) l.visible = metric !== 'none' && metric !== 'activity';
     if (metric !== 'none') {
-      this.cut = null;
+      this.app.setCut(null);
       const f = floor ?? (this.app.view === 1 ? 1 : 0);
-      this.app.viewFloor(f);
-      this.app.rig.flyTo(f ? [0, 27, 10] : [0, 24, 10], [0, FLOORS[f].y, 0.5]);
+      this.app.viewFloor(f as 0 | 1);
+      this.app.flyTo(f ? [0, 27, 10] : [0, 24, 10], [0, FLOORS[f].y, 0.5]);
     }
     this.drawLegend();
     this.redraw();
     this.groupBtns?.refresh();
-    this.app.features.comfort?.metricBtns?.refresh();
+    for (const listener of this.metricListeners) listener();
   }
 
   drawLegend() {
@@ -107,7 +102,7 @@ export class LayersFeature {
 
   // 局部差异源：空调出风口、开着的窗户、灶台、人……（每个源带楼层）
   sources(metric) {
-    const app = this.app, env = app.envModel, out = [];
+    const app = this.app, env = app.envModel, out: HeatSource[] = [];
     const add = (x, z, floor, r, value) => { const rm = roomAt(x, z, floor); if (rm && !rm.outdoor) out.push({ x, z, r, value, room: rm.id, floor }); };
     const registry = app.devices.registry;
     for (const d of registry.byType('ac')) {
@@ -118,13 +113,13 @@ export class LayersFeature {
         if (p && n) add(p.x + n.x * 1.2, p.z + n.z * 1.2, d.floor ?? 0, 2.4, climate.getSetpoint() - 1);
       }
     }
-    for (const w of (Object.values(app.house.windows) as any[])) {
-      if (!w.isOpen) continue;
-      const p = w.group.position, n = new THREE.Vector3(0, 0, 1).applyQuaternion(w.group.quaternion);
+    for (const w of app.openings.list(['window', 'slide'])) {
+      if (!w.isOpen()) continue;
+      const { center: p, normal: n } = w.getFrame();
       const v = { temp: env.outdoor.temp, rh: env.outdoor.rh, pm: env.outdoor.pm, co2: 430, noise: env.outdoor.noise - 5 }[metric];
       for (const s of [1, -1]) add(p.x + n.x * s * 0.7, p.z + n.z * s * 0.7, w.floor, 2.0, v);
     }
-    const fire = app.features.safety?.fireActive;
+    const fire = app.home.fireActive;
     if (fire || app.people.list.some((p) => p.activity.includes('做饭'))) {
       const v = { temp: fire ? 60 : env.rooms.kitchen.temp + 4, rh: env.rooms.kitchen.rh + 10, pm: fire ? 500 : env.rooms.kitchen.pm + 60, co2: 1400, noise: 55 }[metric];
       add(7.3, 1.6, 0, fire ? 3.5 : 1.6, v);
@@ -132,7 +127,7 @@ export class LayersFeature {
     if (metric === 'co2' || metric === 'noise') for (const p of app.people.list) if (p.room && p.object.visible && env.rooms[p.room]) add(p.x, p.z, p.floor, 1.4, metric === 'co2' ? env.rooms[p.room].co2 + 350 : env.rooms[p.room].noise + 8);
     const ventilation = registry.getVentilation('fresh-air');
     if (metric === 'pm' && ventilation?.isOn()) for (const v of ventilation.getOutlets?.() ?? []) add(v.x, v.z, v.floor, 1.3, 3);
-    if (metric === 'temp' && app.sun.elevation > 5 && app.clock.weather !== 'rainy' && !app.features.comfort?.shadingOn) {
+    if (metric === 'temp' && app.sun.elevation > 5 && app.clock.weather !== 'rainy' && !app.home.shadingOn) {
       for (const [x, room, f] of [[-4.6, 'living', 0], [1.3, 'dining', 0], [5.6, 'kitchen', 0], [-6.0, 'study', 1], [-0.6, 'family', 1], [5.6, 'guest', 1]]) add(x, 4.2, f, 1.6, env.rooms[room].temp + 2.5 * app.sunFactor);
     }
     return out;
@@ -158,20 +153,21 @@ export class LayersFeature {
     const app = this.app;
     const s1 = section('楼层与剖切', '选择只看一层或二层，或拖动剖切高度从上往下"切开"房屋，查看各层空间关系与内部布置。剖切使用裁剪平面实现：高于该高度的构件不绘制。');
     s1.append(el('div', { class: 'btns' },
-      button('整栋', () => { this.cut = null; app.viewFloor('all'); app.rig.flyTo([24, 16, 28], [0, 3, 0]); }),
-      button('一层平面', () => { this.cut = null; app.viewFloor(0); app.rig.flyTo([0, 24, 10], [0, 0, 0.5]); }, 'primary'),
-      button('二层平面', () => { this.cut = null; app.viewFloor(1); app.rig.flyTo([0, 27, 10], [0, 3.2, 0.5]); }, 'primary'),
-      button('剖面透视', () => { this.setCut(4.6); app.rig.flyTo([16, 14, 16], [0, 2, 0]); }),
+      button('整栋', () => { app.setCut(null); app.viewFloor('all'); app.flyTo([24, 16, 28], [0, 3, 0]); }),
+      button('一层平面', () => { app.setCut(null); app.viewFloor(0); app.flyTo([0, 24, 10], [0, 0, 0.5]); }, 'primary'),
+      button('二层平面', () => { app.setCut(null); app.viewFloor(1); app.flyTo([0, 27, 10], [0, 3.2, 0.5]); }, 'primary'),
+      button('剖面透视', () => { app.setCut(4.6); app.flyTo([16, 14, 16], [0, 2, 0]); }),
     ));
-    this.cutSlider = slider('剖切高度', 0.6, 9.0, 0.05, () => Math.min(9, this.cut ?? sectionPlane.constant), (v) => this.setCut(v), (v) => (v >= 8.9 ? '不剖切' : v.toFixed(2) + ' m'));
+    this.cutSlider = slider('剖切高度', 0.6, 9.0, 0.05, () => Math.min(9, app.manualCut ?? sectionPlane.constant), (v) => app.setCut(v), (v) => (v >= 8.9 ? '不剖切' : v.toFixed(2) + ' m'));
     s1.append(this.cutSlider);
     const layer = (label, obj) => toggle(label, () => obj.visible, (v) => { obj.visible = v; });
-    s1.append(layer('墙体', app.house.walls));
-    s1.append(toggle('门窗', () => app.scene.getObjectByName('openings').visible, (v) => { app.scene.getObjectByName('openings').visible = v; }));
-    s1.append(layer('家具', app.furniture.root));
-    s1.append(layer('智能设备与设施', app.devices.root));
-    s1.append(layer('室外环境', app.env.group));
-    s1.append(toggle('地下雨水蓄水池剖切', () => app.env.rainTank.group.visible, (v) => { app.env.showTankSection(v); if (v) app.rig.flyTo([16, 4, 15], [11, -1, 7]); }));
+    const layers = app.sceneLayers;
+    s1.append(layer('墙体', layers.walls));
+    s1.append(layer('门窗', layers.openings));
+    s1.append(layer('家具', layers.furniture));
+    s1.append(layer('智能设备与设施', layers.devices));
+    s1.append(layer('室外环境', layers.outdoor));
+    s1.append(toggle('地下雨水蓄水池剖切', () => app.outdoor.isTankSectionVisible(), (v) => { app.outdoor.showTankSection(v); if (v) app.flyTo([16, 4, 15], [11, -1, 7]); }));
     root.append(s1);
 
     const s2 = section('环境参数分布', '各房间温度、湿度、PM2.5 等来自室内环境模拟（与门窗、空调、新风、日照、人员联动），按“红→黄→蓝”由高到低着色。先选参数，再用上面的按钮切换一层 / 二层。');

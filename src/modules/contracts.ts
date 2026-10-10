@@ -17,6 +17,7 @@ export const MODULE_SERVICE = {
   lightPool: 'scene.lightPool',
   floorY: 'scene.floorY',
   ceilingY: 'scene.ceilingY',
+  openings: 'scene.openings',
 } as const;
 
 export const DEVICE_CAPABILITY = {
@@ -247,6 +248,43 @@ export interface FilterCapability {
   replaceFilter(): void;
 }
 
+export type OpeningKind = 'door' | 'window' | 'slide';
+
+/** World-space placement of a door or window, measured at the middle of the opening. */
+export interface OpeningFrame {
+  readonly center: THREE.Vector3;
+  /** Horizontal wall normal; points to one side of the wall, not necessarily outdoors. */
+  readonly normal: THREE.Vector3;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** One door or window of the house, exposed by ID without its Three.js parts. */
+export interface OpeningHandle {
+  readonly id: string;
+  readonly kind: OpeningKind;
+  readonly room: string | null;
+  readonly floor: number;
+  readonly exterior: boolean;
+  isOpen(): boolean;
+  setOpen(open: boolean): void;
+  /** Animated opening progress, 0 closed to 1 fully open. */
+  getOpenRatio(): number;
+  getFrame(): OpeningFrame;
+  /** Exterior windows only: light the window from inside at night. */
+  setNightGlow?(opacity: number, color?: THREE.Color): void;
+}
+
+/** Narrow scene service for doors and windows; the house keeps their geometry private. */
+export interface OpeningsService {
+  list(kind?: OpeningKind | readonly OpeningKind[]): readonly OpeningHandle[];
+  get(id: string): OpeningHandle | undefined;
+  require(id: string): OpeningHandle;
+  /** Mount hardware such as a smart lock on a hinged door leaf so it swings with the door. */
+  attachToLeaf(id: string, module: SceneModuleContract): boolean;
+  update(dt: number): void;
+}
+
 export interface ElevatorCapability {
   call(floor: number, onArrive?: () => void): boolean;
   getCurrentFloor(): number;
@@ -304,6 +342,33 @@ export interface ModulePose {
   scale?: THREE.Vector3 | number | readonly [number, number, number];
 }
 
+export interface ToggleInfoControl {
+  readonly type: 'toggle';
+  readonly label: string;
+  get(): boolean;
+  set(value: boolean): void;
+}
+
+export interface RangeInfoControl {
+  readonly type: 'range';
+  readonly label: string;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+  get(): number;
+  set(value: number): void;
+  fmt?(value: number): string;
+}
+
+export interface ButtonInfoControl {
+  readonly type: 'button';
+  readonly label: string;
+  onClick(): void;
+}
+
+/** Controls rendered on the selection info card. */
+export type ModuleInfoControl = ToggleInfoControl | RangeInfoControl | ButtonInfoControl;
+
 /** Stable metadata shared by furniture, devices, and imported Blender models. */
 export interface ModuleInfo {
   name: string;
@@ -313,13 +378,20 @@ export interface ModuleInfo {
   func?: string;
   maintain?: string;
   status?: string;
+  /** Registry ID when the module is a house device. */
+  deviceId?: string;
   data?: Record<string, unknown>;
-  [key: string]: unknown;
+  controls?: readonly ModuleInfoControl[];
 }
 
 /**
  * Runtime contract for one independently attachable scene item.
  * A module owns its root and update hook; placement and mounting stay with the host.
+ *
+ * 生命周期约定：
+ * - mount / unmount 可以反复调用；mount 到新父节点会从原父节点移走，unmount 未挂载时什么也不做。
+ * - dispose 只生效一次，重复调用无副作用；dispose 会先卸载，再按 disposeResources 释放自有资源（共享材质、贴图不释放）。
+ * - dispose 之后再 place / mount / 修改信息或能力会抛出错误，update 不再执行。
  */
 export interface SceneModuleContract {
   readonly id: string;
@@ -348,6 +420,8 @@ export interface ModuleServiceRegistry {
 }
 
 export interface ModuleFactoryContext {
+  /** 取消异步创建（如导入模型）；取消后工厂释放已解析的资源并以 AbortError 结束 */
+  signal?: AbortSignal;
   scene?: THREE.Scene;
   renderer?: THREE.WebGLRenderer;
   materials?: unknown;

@@ -39,6 +39,12 @@
       <h1>独立模块预览</h1>
       <p class="hint">直接创建单件家具、真实设备工厂或 Blender 模型；可操作设备能力并观察模块自身的反馈，无需加载整屋场景。</p>
 
+      <h2>整屋实时模块</h2>
+      <p id="live-status" class="hint">未连接整屋：请从整屋主界面右上角的「原子模块预览」打开本页。</p>
+      <div class="field"><label for="live-filter">筛选（名称 / ID / 房间）</label><input id="live-filter" type="text" /></div>
+      <div class="field"><label for="live-module">运行中的模块</label><select id="live-module" size="8"></select></div>
+      <div class="actions"><button id="live-refresh">刷新列表</button><button id="live-locate">在整屋中定位</button></div>
+
       <div class="field"><label for="filter">模块类别</label><select id="filter">
         <option value="all">全部</option><option value="furniture">家具</option><option value="sample-device">设备示例模型</option><option value="house-device">整屋设备工厂</option>
       </select></div>

@@ -104,8 +104,8 @@ export function mat(name) {
   if (!d) throw new Error('未知材质: ' + name);
   const { map, section, normal, ...rest } = d;
   const m = new THREE.MeshStandardMaterial(rest);
-  if (map) { m.map = getTexture(map); sharedTextures.add(m.map); }
-  if (map && normal) { m.normalMap = getNormal(map, normal); sharedTextures.add(m.normalMap); } // 法线贴图：凹凸质感
+  if (map) { m.map = getTexture(map); if (m.map) sharedTextures.add(m.map); }
+  if (map && normal) { m.normalMap = getNormal(map, normal); if (m.normalMap) sharedTextures.add(m.normalMap); } // 法线贴图：凹凸质感
   if (section) {
     m.clippingPlanes = [sectionPlane];
     m.side = THREE.DoubleSide; // 剖切后能看到墙体内侧，截面看起来是实心的

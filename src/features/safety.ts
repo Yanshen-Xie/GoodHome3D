@@ -11,12 +11,14 @@ import { Emitter } from '../systems/particles.js';
 import { FloorPath } from '../systems/pathViz.js';
 import { StatusPins } from '../systems/statusPins.js';
 import { section, button, stats, logBox, toggle, el, toast } from '../ui/ui.js';
+import type { SafetyServices } from './services.js';
+import type { NavPoint } from '../systems/nav.js';
 
 const STOVE = { x: 7.6, y: 0.95, z: 1.6 };
 
 export class SafetyFeature {
   // Fields are declared here and initialized by the existing runtime flow.
-  declare app: any;
+  declare app: SafetyServices;
   declare dangerRing: any;
   declare detectBox: any;
   declare detectLabel: any;
@@ -44,8 +46,9 @@ export class SafetyFeature {
   declare t: any;
   declare time: any;
 
-  constructor(app) {
+  constructor(app: SafetyServices) {
     this.app = app;
+    const kitchenDoor = app.openings.require('door-kitchen');
     this.fireActive = false;
     this.t = 0;
     this.routes = [];
@@ -73,7 +76,7 @@ export class SafetyFeature {
           const dx = p.x - STOVE.x, dz = p.z - STOVE.z, d = Math.hypot(dx, dz) || 1;
           p.vx += (dx / d) * dt * 0.8 + (Math.random() - 0.5) * dt; p.vz += (dz / d) * dt * 0.8 + (Math.random() - 0.5) * dt;
         }
-        const doorOpen = this.app.house.doors['door-kitchen'].t > 0.2;
+        const doorOpen = kitchenDoor.getOpenRatio() > 0.2;
         const inDoor = p.z > 1.15 && p.z < 2.05 && p.y < 2.2 && doorOpen;
         if (p.x < 3.35 && p.x > 3.0 && !inDoor) { p.x = 3.35; p.vx = Math.abs(p.vx) * 0.3; }
         if (p.z < 0.75 && p.x > 3.2) { p.z = 0.75; p.vz = Math.abs(p.vz) * 0.3; }
@@ -135,7 +138,7 @@ export class SafetyFeature {
   sendHelper(target, floor, onArrive) {
     const app = this.app;
     const helpers = [app.people.mom, app.people.girl].filter((p) => p.object.visible && p.mode !== 'fallen');
-    let best = null;
+    let best: { p: (typeof helpers)[number]; len: number } | null = null;
     for (const p of helpers) {
       const path = app.nav.findPath({ x: p.x, z: p.z, floor: p.floor }, { x: target.x, z: target.z, floor });
       if (!path) continue;
@@ -168,8 +171,8 @@ export class SafetyFeature {
     this.labels.push(app.makeLabel('🔥 起火点：厨房灶台', 'alarm', STOVE.x, 2.2, STOVE.z));
     this.log('厨房灶台油锅起火（模拟）', 'err');
     app.viewFloor('all');
-    app.features.layers.setCut(4.9);
-    app.rig.flyTo([12, 16, 17], [1.5, 1.5, 0.5]);
+    app.setCut(4.9);
+    app.flyTo([12, 16, 17], [1.5, 1.5, 0.5]);
     for (const p of app.people.list) if (p.mode !== 'fallen') p.mode = 'stop';
   }
 
@@ -187,7 +190,7 @@ export class SafetyFeature {
       registry.setStatus('gas-valve', 'warning');
       this.log('联动：切断厨房燃气阀门', 'warn');
       registry.getLock('smart-lock')?.setLocked(false);
-      for (const id of ['door-entry', 'door-back', 'door-living']) app.house.doors[id].setOpen(true);
+      for (const id of ['door-entry', 'door-back', 'door-living']) app.openings.require(id).setOpen(true);
       this.log('联动：门锁解锁，入户门、后门、客厅落地门打开', 'warn');
       for (const light of registry.byType('emergency')) registry.getIndicator(light.id)?.setIntensity(3);
       for (const sign of registry.byType('exitSign')) registry.getIndicator(sign.id)?.setIntensity(1.6);
@@ -204,14 +207,14 @@ export class SafetyFeature {
     once(3.0, () => this.planEvacuation());
     if (t > 3 && !this.steps.has('door') && !app.people.list.some((p) => p.room === 'kitchen')) {
       this.steps.add('door');
-      app.house.doors['door-kitchen'].setOpen(false);
+      app.openings.require('door-kitchen').setOpen(false);
       this.log('防火门自动关闭，阻止烟气蔓延到餐厅和走廊', 'warn');
     }
   }
 
   /** 分别计算 p 到每个安全出口的 A* 路线（avoidDanger 表示绕开火源危险区），返回最短的 { ex, path, len } */
   nearestExit(p, avoidDanger) {
-    let best = null;
+    let best: { ex: (typeof EXITS)[number]; path: NavPoint[]; len: number } | null = null;
     for (const ex of EXITS) {
       const path = this.app.nav.findPath({ x: p.x, z: p.z, floor: p.floor }, { x: ex.x, z: ex.z, floor: 0 }, { avoidDanger });
       if (!path) continue;
@@ -282,15 +285,15 @@ export class SafetyFeature {
     dev.registry.setStatus('elevator', 'normal');
     dev.registry.getValve('gas-valve')?.setOpen(true);
     dev.registry.getLock('smart-lock')?.setLocked(true);
-    for (const id of ['door-entry', 'door-back', 'door-living']) app.house.doors[id].setOpen(false);
-    app.house.doors['door-kitchen'].setOpen(true);
+    for (const id of ['door-entry', 'door-back', 'door-living']) app.openings.require(id).setOpen(false);
+    app.openings.require('door-kitchen').setOpen(true);
     for (const light of dev.registry.byType('emergency')) dev.registry.getIndicator(light.id)?.setIntensity(0);
     for (const sign of dev.registry.byType('exitSign')) dev.registry.getIndicator(sign.id)?.setIntensity(0.4);
     for (const l of dev.registry.byType('light')) dev.registry.setPower(l.id, false);
     if (!silent && was) {
       const homes = [[-6.45, 2.4, 0], [6.0, -3.4, 1], [-5.5, -2.4, 0]];
       app.people.list.forEach((p, i) => { p.mode = 'routine'; p.activity = '返回室内'; p.goTo(homes[i][0], homes[i][1], { floor: homes[i][2], onArrive: () => { p.waitTimer = 2; } }); });
-      app.features.layers.setCut(9);
+      app.setCut(null);
       this.log('火情处置完毕，系统复位', 'ok');
     }
   }
@@ -320,7 +323,7 @@ export class SafetyFeature {
     this.log('已推送：家属手机 App、物业值班终端（弹窗 + 声音）', 'warn');
     toast(`🆘 ${room.name} 一键呼叫`, 'alarm', 4000);
     app.viewFloor(0);
-    app.rig.flyTo([room.x0 - 1, 11, room.z1 + 7], [(room.x0 + room.x1) / 2, 0, (room.z0 + room.z1) / 2]);
+    app.flyTo([room.x0 - 1, 11, room.z1 + 7], [(room.x0 + room.x1) / 2, 0, (room.z0 + room.z1) / 2]);
     const target = { x: (room.x0 + room.x1) / 2 + 0.3, z: room.z1 - 0.7 };
     const h = this.sendHelper(target, 0, (helper) => {
       if (!this.sos) return;
@@ -350,12 +353,12 @@ export class SafetyFeature {
     this.logBox.clear();
     this.t = 0;
     g.fall();
-    const room = roomById(g.room) ?? roomById('hall1');
+    const room = roomById(g.room) ?? roomById('hall1')!;
     this.fall = { t: 0, room, detected: false };
     this.fallActive = true;
     this.log(`奶奶在${room.name}摔倒（模拟）`, 'err');
     app.viewFloor(0);
-    app.rig.flyTo([g.x + 3, 7, g.z + 6], [g.x, 0.3, g.z]);
+    app.flyTo([g.x + 3, 7, g.z + 6], [g.x, 0.3, g.z]);
   }
 
   fallTimeline(dt) {
@@ -376,7 +379,7 @@ export class SafetyFeature {
         if (!this.fall) return;
         helper.activity = '扶起老人';
         this.log(`${helper.name}已赶到，响应用时 ${f.t.toFixed(1)} s，正在扶起老人`, 'ok');
-        setTimeout(() => this.resolveFall(), 2500);
+        this.app.later(() => this.resolveFall(), 2500);
       });
       if (h) this.log(`${h.name}${h.floor ? '（在二楼，经楼梯下楼）' : ''}正在赶来`, 'warn');
     }
@@ -413,7 +416,7 @@ export class SafetyFeature {
     it.running = false;
     this.intrusion = { t: 0, stage: 0 };
     app.viewFloor('all');
-    app.rig.flyTo([24, 13, 6], [10, 0.5, -7]);
+    app.flyTo([24, 13, 6], [10, 0.5, -7]);
   }
 
   intrusionTimeline(dt) {
@@ -422,7 +425,7 @@ export class SafetyFeature {
     if (I.stage === 0 && it.x < 13.1) {
       I.stage = 1;
       this.log('围栏红外对射被遮断（东北角）→ 入侵预警', 'warn');
-      for (const led of app.env.beamPosts) led.material.emissiveIntensity = 4;
+      app.outdoor.setPerimeterAlert(true);
     }
     if (I.stage === 1 && it.x < 11) {
       I.stage = 2;
@@ -460,7 +463,7 @@ export class SafetyFeature {
     this.detectBox.visible = false;
     this.detectLabel?.parent?.remove(this.detectLabel);
     for (const camera of dev.registry.byType('camera')) { dev.registry.getCamera(camera.id)?.setArmed(false); dev.registry.getCamera(camera.id)?.setAlert(false); }
-    for (const led of app.env.beamPosts) led.material.emissiveIntensity = 1;
+    app.outdoor.setPerimeterAlert(false);
     dev.registry.setStatus('camera-back', 'normal');
     dev.registry.setPower('floodlight', false);
     this.setFireAlarms(false);
@@ -486,7 +489,7 @@ export class SafetyFeature {
     this.pins.visible = true;
     this.pinToggle.refresh();
     app.viewFloor(0);
-    app.rig.flyTo([0, 24, 12], [0, 0, 0]);
+    app.flyTo([0, 24, 12], [0, 0, 0]);
   }
 
   buildPanel(root) {
@@ -495,7 +498,7 @@ export class SafetyFeature {
     s1.append(el('div', { class: 'btns' },
       button('🔥 模拟厨房起火', () => this.startFire(), 'danger'),
       button('扑灭 / 复位', () => this.resetFire()),
-      button('查看厨房', () => { app.viewFloor(0); app.rig.flyTo([5.0, 5.4, 6.6], [6.2, 0.8, 2.4]); }),
+      button('查看厨房', () => { app.viewFloor(0); app.flyTo([5.0, 5.4, 6.6], [6.2, 0.8, 2.4]); }),
     ));
     this.fireStats = stats([
       { k: '报警响应', v: () => (this.fireActive && this.t >= 1.5 ? '1.5' : '—'), unit: 's' },
@@ -519,7 +522,7 @@ export class SafetyFeature {
     root.append(s2);
 
     const s3 = section('入侵检测（离家布防）', '离家后系统自动布防：围栏红外对射、AI 摄像头、门窗磁。陌生人翻越围栏时，摄像头识别人形并联动投光灯、声光报警，推送业主和物业。');
-    s3.append(el('div', { class: 'btns' }, button('🚨 模拟夜间入侵', () => { app.setTime(22); app.syncTime(); this.triggerIntrusion(); }, 'danger'), button('结束演示', () => this.resetIntrusion())));
+    s3.append(el('div', { class: 'btns' }, button('🚨 模拟夜间入侵', () => { app.setTime(22); this.triggerIntrusion(); }, 'danger'), button('结束演示', () => this.resetIntrusion())));
     root.append(s3);
 
     const s4 = section('处置过程记录');
@@ -540,7 +543,7 @@ export class SafetyFeature {
     if (id === 'sos-elder' || id === 'sos-bath') {
       const info = this.app.devices.registry.getModule(id)?.info;
       if (info) info.controls = [{ type: 'button', label: '按下呼叫按钮', onClick: () => this.triggerSOS(id) }, { type: 'button', label: '取消呼叫', onClick: () => this.cancelSOS() }];
-      this.app.selection.render();
+      this.app.selection.refresh();
     }
   }
 

@@ -1,4 +1,5 @@
 import type { SceneModuleContract } from '../modules/contracts';
+import type { HouseDeviceType } from './deviceAssemblies.js';
 import {
   DEVICE_CAPABILITY,
   MODULE_CAPABILITY,
@@ -16,7 +17,7 @@ import type {
 /** Public device descriptor. Device-specific fields stay private to their implementation. */
 export interface DeviceRegistryEntry {
   readonly id: string;
-  readonly type: string;
+  readonly type: HouseDeviceType;
   readonly room?: string | null;
   readonly floor?: number;
   readonly module: SceneModuleContract;
@@ -41,7 +42,7 @@ export class DeviceRegistry<T extends DeviceRegistryEntry = DeviceRegistryEntry>
 
   all(): readonly T[] { return [...this.entries.values()]; }
 
-  byType(type: string): readonly T[] { return this.all().filter((device) => device.type === type); }
+  byType(type: HouseDeviceType): readonly T[] { return this.all().filter((device) => device.type === type); }
 
   byRoom(room: string): readonly T[] { return this.all().filter((device) => device.room === room); }
 

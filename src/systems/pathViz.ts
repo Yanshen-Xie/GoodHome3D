@@ -2,23 +2,25 @@
 // 每个顶点可以有不同颜色（如无障碍检查时，过窄的路段显示为红色）。
 import * as THREE from 'three';
 import { sectionPlane } from '../scene/common.js';
+import type { XZ } from './nav.js';
 
-let arrowTex = null;
-function arrowTexture() {
+let arrowTex: THREE.CanvasTexture | null = null;
+function arrowTexture(): THREE.CanvasTexture {
   if (arrowTex) return arrowTex;
   const c = document.createElement('canvas');
   c.width = 128; c.height = 64;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d')!;
   g.fillStyle = 'rgba(255,255,255,0.55)';
   g.fillRect(0, 0, 128, 64);
   g.fillStyle = '#ffffff';
   g.beginPath();
   g.moveTo(30, 10); g.lineTo(80, 32); g.lineTo(30, 54); g.lineTo(45, 32); g.closePath();
   g.fill();
-  arrowTex = new THREE.CanvasTexture(c);
-  arrowTex.wrapS = THREE.RepeatWrapping;
-  arrowTex.colorSpace = THREE.SRGBColorSpace;
-  return arrowTex;
+  const texture = new THREE.CanvasTexture(c);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  arrowTex = texture;
+  return texture;
 }
 
 export class FloorPath {
@@ -32,8 +34,8 @@ export class FloorPath {
    * @param color  颜色，或函数 (i, 累计长度) => THREE.Color
    * @param width  带宽（米）
    */
-  constructor(points, color: number | ((index: number, distance: number) => THREE.Color) = 0x2ecc71, width = 0.35, y = 0.05) {
-    const pos = [], uv = [], col = [], idx = [];
+  constructor(points: readonly (XZ & { y?: number })[], color: number | ((index: number, distance: number) => THREE.Color) = 0x2ecc71, width = 0.35, y = 0.05) {
+    const pos: number[] = [], uv: number[] = [], col: number[] = [], idx: number[] = [];
     let dist = 0;
     const c = new THREE.Color();
     for (let i = 0; i < points.length; i++) {

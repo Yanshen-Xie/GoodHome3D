@@ -50,6 +50,7 @@ export interface HouseLightFactoryContext {
 }
 
 function validateConfig(config: HouseLightConfig): void {
+  if (config.kind !== 'light') throw new Error('House light factory requires kind "light": ' + config.id);
   if (!config.id.trim()) throw new Error('House light id must not be empty');
   if (!Number.isInteger(config.floor) || config.floor < 0) {
     throw new Error('House light floor must be a non-negative integer: ' + config.id);

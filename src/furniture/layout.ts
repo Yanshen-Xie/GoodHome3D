@@ -42,7 +42,7 @@ export function createFurnitureModuleFromObject(
   info: ModuleInfo = { name: id, category: '家具' },
   capabilities?: Iterable<readonly [string, unknown]>,
 ): SceneModule {
-  const moduleInfo = { name: id, category: '家具', ...info };
+  const moduleInfo = { category: '家具', ...info };
   object.name = id;
   setInfo(object, moduleInfo);
   return new SceneModule({
@@ -110,7 +110,7 @@ export function buildFurniture() {
   putKind('plant', [1.0], -7.4, 4.5);
   putKind('plant', [0.9], -1.5, 4.5);
   putKind('bookshelf', [1.2, 1.9], -7.25, 0.9, 0, { info: { name: '书架', category: '家具', room: 'living' } });
-  wallArt(-2.97, 1.3, 2.8, 90, 0, 1.4, 0.8, 1);
+  wallArt(-3.083, 1.3, 2.8, 90, 0, 1.4, 0.8, 1); // 贴在电视背景墙隔断的餐厅一侧
 
   // ----- 餐厅 -----
   putKind('table', [1.6, 0.9, 0.75], 1.1, 2.9, 0, { info: { name: '实木餐桌', category: '家具', func: '四人餐桌，桌角圆润处理', room: 'dining' } });
@@ -132,7 +132,7 @@ export function buildFurniture() {
 
   // ----- 老人房 -----
   putKind('bed', [1.2, 2.0, 'fabricBeige'], -5.5, -3.83, 0, { info: { name: '护理床', category: '家具 / 适老', func: '床高 45cm，一侧带起身扶手，可升降床头', room: 'elder' } });
-  putKind('grabBar', [0.9], -6.2, -3.4, 0, { y: 0.75, rotation: [0, Math.PI / 2, Math.PI / 2], info: { name: '床边起身扶手', category: '适老无障碍', room: 'elder' } });
+  putKind('bedRail', [0.9, 0.75], -6.21, -3.4, 90, { info: { name: '床边起身扶手', category: '适老无障碍', func: '立柱落地、紧贴床侧，扶手高 0.75m，辅助老人起身', room: 'elder' } });
   putKind('cabinet', [0.45, 0.5, 0.4, 'woodLight', 1], -4.45, -4.65, 0, { info: { name: '床头柜', category: '家具', room: 'elder' } });
   putKind('armchair', ['fabricGreen'], -7.3, -1.55, 90, { info: { name: '起身辅助椅', category: '家具 / 适老', func: '高座面 + 扶手，方便老人起坐', room: 'elder' } });
   putKind('cabinet', [1.6, 2.1, 0.55, 'woodWhite', 2], -3.62, -3.6, 270, { info: { name: '衣柜', category: '家具', room: 'elder' } });
@@ -220,7 +220,7 @@ export function createFurnitureModule(
   id: string,
   kind: FurnitureKind | string,
   args: unknown[] = [],
-  info: Record<string, unknown> = { name: id, category: '家具' },
+  info: Partial<ModuleInfo> = { name: id, category: '家具' },
 ) {
   const object = createFurnitureGeometry(kind, { args });
   return createFurnitureModuleFromObject(id, object, { name: id, category: '家具', ...info });

@@ -339,7 +339,7 @@ function normalFromTexture(tex, strength = 2) {
   const h = (x, y) => { x = (x + W) % W; y = (y + H) % H; const i = (y * W + x) * 4; return (d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11) / 255; };
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
-  const out = c.getContext('2d').createImageData(W, H);
+  const out = c.getContext('2d')!.createImageData(W, H);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const dx = (h(x + 1, y - 1) + 2 * h(x + 1, y) + h(x + 1, y + 1)) - (h(x - 1, y - 1) + 2 * h(x - 1, y) + h(x - 1, y + 1));
     const dy = (h(x - 1, y + 1) + 2 * h(x, y + 1) + h(x + 1, y + 1)) - (h(x - 1, y - 1) + 2 * h(x, y - 1) + h(x + 1, y - 1));
@@ -351,7 +351,7 @@ function normalFromTexture(tex, strength = 2) {
     out.data[i + 2] = (nz / L * 0.5 + 0.5) * 255;
     out.data[i + 3] = 255;
   }
-  c.getContext('2d').putImageData(out, 0, 0);
+  c.getContext('2d')!.putImageData(out, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.userData.worldSize = tex.userData.worldSize;
@@ -380,7 +380,7 @@ export function getTexture(name) {
 export function textTexture(lines, { w = 256, h = 128, bg = '#1a7f3c', fg = '#ffffff', font = 'bold 48px sans-serif' } = {}) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d')!;
   g.fillStyle = bg; g.fillRect(0, 0, w, h);
   g.fillStyle = fg; g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
   const arr = Array.isArray(lines) ? lines : [lines];

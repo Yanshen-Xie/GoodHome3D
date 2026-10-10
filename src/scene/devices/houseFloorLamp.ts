@@ -26,6 +26,7 @@ export interface HouseFloorLampConfig {
 }
 
 export function createHouseFloorLamp(config: HouseFloorLampConfig): SceneModule {
+  if (config.kind !== 'light') throw new Error('Floor lamp factory requires kind "light": ' + config.id);
   if (!config.id.trim() || !config.name.trim() || !config.room.trim()) {
     throw new Error('Floor lamp id, name and room are required');
   }

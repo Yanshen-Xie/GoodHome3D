@@ -1,9 +1,18 @@
 // 数据大屏：覆盖在三维场景左右两侧的深色图表面板，中间保留三维画面。
 // 图表用 ECharts：雷达图（四大特征指数）、仪表盘（实时能源）、饼图（用电分项）、柱状图（各房间温度）、
 // 折线图（能源趋势）、环形图（设备状态），以及告警事件列表。数据每 0.5 秒刷新。
-import * as echarts from 'echarts';
 import { INDOOR_ROOMS } from '../scene/layout.js';
-import { el } from './ui.js';
+import type { FeatureServices, LogLevel } from '../features/services.js';
+import { el, initChart } from './ui.js';
+
+export interface AppEvent {
+  readonly time: string;
+  readonly level: LogLevel;
+  readonly text: string;
+}
+
+export type DashboardServices = Pick<FeatureServices, 'flyTo' | 'viewFloor' | 'clock' | 'devices' | 'envModel' | 'outdoor' | 'home'>
+  & { readonly events: readonly AppEvent[] };
 
 const FONT = 'PingFang SC, Microsoft YaHei, sans-serif';
 const txt = { color: '#cfe0f5', fontFamily: FONT, fontSize: 11 };
@@ -11,7 +20,7 @@ const txt = { color: '#cfe0f5', fontFamily: FONT, fontSize: 11 };
 export class Dashboard {
   // Fields are declared here and initialized by the existing runtime flow.
   declare alarmBox: any;
-  declare app: any;
+  declare app: DashboardServices;
   declare charts: any;
   declare els: any;
   declare kpi: any;
@@ -19,7 +28,7 @@ export class Dashboard {
   declare trend: any;
   declare visible: any;
 
-  constructor(app) {
+  constructor(app: DashboardServices) {
     this.app = app;
     this.visible = false;
     this.root = el('div', { id: 'dash' });
@@ -43,15 +52,21 @@ export class Dashboard {
     this.trend = { t: [], pv: [], load: [] };
   }
 
+  /** 移除大屏页面元素（图表实例由 disposeAllCharts 统一释放） */
+  dispose() {
+    this.root.remove();
+    this.charts = null;
+  }
+
   toggle() {
     this.visible = !this.visible;
     this.root.classList.toggle('show', this.visible);
     document.body.classList.toggle('dash-on', this.visible);
     if (this.visible) {
-      if (!this.charts) this.charts = Object.fromEntries(Object.entries(this.els as Record<string, HTMLElement>).map(([k, d]) => [k, echarts.init(d, null, { renderer: 'canvas' })]));
+      if (!this.charts) this.charts = Object.fromEntries(Object.entries(this.els as Record<string, HTMLElement>).map(([k, d]) => [k, initChart(d)]));
       this.resize();
       this.slowUpdate(true);
-      this.app.rig.flyTo([24, 16, 28], [0, 3, 0]);
+      this.app.flyTo([24, 16, 28], [0, 3, 0]);
       this.app.viewFloor('all');
     }
   }
@@ -65,19 +80,19 @@ export class Dashboard {
     const inRange = (k, lo, hi) => rooms.filter((r) => env.rooms[r.id][k] >= lo && env.rooms[r.id][k] <= hi).length / rooms.length;
     const devices = registry.all();
     const faults = devices.filter((d) => registry.getStatus(d.id) === 'fault').length, warns = devices.filter((d) => registry.getStatus(d.id) === 'warning').length;
-    const safety = Math.max(0, 100 - faults * 15 - warns * 6 - (app.features.safety.fireActive ? 40 : 0) - (app.features.safety.sos ? 15 : 0));
+    const safety = Math.max(0, 100 - faults * 15 - warns * 6 - (app.home.fireActive ? 40 : 0) - (app.home.sosActive ? 15 : 0));
     const comfort = Math.round(55 * inRange('temp', 20, 27) + 45 * inRange('rh', 40, 70));
     const health = Math.round(50 * inRange('pm', 0, 35) + 50 * inRange('co2', 0, 1000));
-    const g = app.features.green.state;
+    const g = app.home.energy.state;
     const green = Math.round(Math.min(100, 50 + 50 * Math.min(1, (g.pv + Math.max(0, -g.battery)) / Math.max(0.1, g.load))));
     const smart = Math.round(100 * devices.filter((d) => registry.getStatus(d.id) !== 'fault').length / devices.length);
-    const aging = 92 - (app.features.safety.sos ? 20 : 0) - (app.features.safety.fallActive ? 20 : 0);
+    const aging = 92 - (app.home.sosActive ? 20 : 0) - (app.home.fallActive ? 20 : 0);
     return { 安全: safety, 舒适: comfort, 健康: health, 绿色: green, 智慧: smart, 适老: aging };
   }
 
   slowUpdate(force = false) {
     const app = this.app;
-    const g = app.features.green;
+    const g = app.home.energy;
     // 趋势数据一直记录，打开大屏时就有历史曲线
     this.trend.t.push(app.clock.hour.toFixed(2)); this.trend.pv.push(+g.state.pv.toFixed(2)); this.trend.load.push(+g.state.load.toFixed(2));
     if (this.trend.t.length > 120) for (const k in this.trend) this.trend[k].shift();
@@ -143,7 +158,7 @@ export class Dashboard {
     if (this.alarmBox.innerHTML !== html) this.alarmBox.innerHTML = html;
     const kpi = [
       ['室外温度', app.envModel.outdoor.temp.toFixed(1), '℃'], ['今日光伏发电', g.todayPV().toFixed(1), 'kWh'], ['今日减碳', (g.todayPV() * 0.5703).toFixed(1), 'kg'],
-      ['雨水蓄水', (app.env.rainTank.level * 8).toFixed(1), 'm³'], ['在线设备', devices.length, '台'], ['待处理告警', devices.filter((d) => ['fault', 'warning'].includes(deviceRegistry.getStatus(d.id))).length, '项'],
+      ['雨水蓄水', (app.outdoor.getTankLevel() * 8).toFixed(1), 'm³'], ['在线设备', devices.length, '台'], ['待处理告警', devices.filter((d) => ['fault', 'warning'].includes(deviceRegistry.getStatus(d.id) ?? 'normal')).length, '项'],
     ];
     this.kpi.innerHTML = kpi.map(([k, v, u]) => `<div><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div></div>`).join('');
   }

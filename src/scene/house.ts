@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { ROOMS, WALLS, WALL_T, EXT, FLOORS, FLOOR_H, SLAB_T, EAVE_Y, ROOF_PITCH, STAIR, ELEVATOR, roomAt } from './layout.js';
 import { mat, box, cylinder, setInfo, tileOf } from './common.js';
+import { HouseOpenings } from './openings.js';
 
 /**
  * 按世界坐标设置 UV（平面投影）：法线朝 ±y 的面用 (x,z)，朝 ±x 的用 (z,y)，其余用 (x,y)。
@@ -189,7 +190,7 @@ export function buildHouse(nav) {
   // 二层外墙开口处（非洞口）都已生成；最后统计各层阻挡
   blockOutsideSecondFloor(nav);
 
-  return { root, walls, floors, roof: roof.group, roofParts: roof, windows, doors, stairs, elevator, topSlab };
+  return { root, walls, floors, roof: roof.group, roofParts: roof, openingsGroup, details, openings: new HouseOpenings(doors, windows), stairs, elevator, topSlab };
 }
 
 /** 创建一块实心墙体（轴对齐）：每个面按朝向的房间选择材质，UV 按世界坐标 */
@@ -368,7 +369,7 @@ function buildRoof() {
   const ridgeY = EAVE_Y + EXT.z1 * tan + 0.1;        // 屋面在外墙线处正好落在墙顶
   const L = halfD / Math.cos(THREE.MathUtils.degToRad(ROOF_PITCH));
   const W = EXT.x1 - EXT.x0 + overhangX * 2;
-  const slopes = [];
+  const slopes: THREE.Mesh[] = [];
   for (const s of [1, -1]) {
     const mats = ['fascia', 'fascia', 'roofTiles', 'fascia', 'fascia', 'fascia'].map(mat);
     const geo = new THREE.BoxGeometry(W, 0.2, L);
@@ -401,7 +402,7 @@ function buildRoof() {
   }
   // 檐沟（沿南北檐口）和四角落水管
   const gutterY = EAVE_Y - overhangZ * tan + 0.02;
-  const gutters = [];
+  const gutters: THREE.Mesh[] = [];
   for (const s of [1, -1]) {
     const gut = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, W, 12, 1, false, 0, Math.PI), mat('darkMetal'));
     gut.rotation.z = Math.PI / 2;
@@ -410,7 +411,7 @@ function buildRoof() {
     group.add(gut);
     gutters.push(gut);
   }
-  const downpipes = [];
+  const downpipes: { x: number; z: number; top: number }[] = [];
   for (const [x, z] of [[EXT.x1 + 0.35, halfD + 0.05], [EXT.x0 - 0.35, halfD + 0.05], [EXT.x1 + 0.35, -halfD - 0.05], [EXT.x0 - 0.35, -halfD - 0.05]]) {
     const p = cylinder(0.05, 0.05, gutterY, 'darkMetal', x, 0, z, 10);
     group.add(p);
@@ -461,7 +462,7 @@ function buildOpening(wd, op, alongX, c, fy) {
     }
   }
 
-  const result: any = { group, op, isOpen: false, alongX, wallC: c, width: w, floor: wd.floor };
+  const result: any = { group, op, isOpen: false, alongX, wallC: c, width: w, floor: wd.floor, exterior: ext };
 
   if (op.kind === 'window' || op.kind === 'slide') {
     const pw = (w - 2 * frameT) / 2 + 0.03, ph = h - 2 * frameT + (op.bottom > 0 ? 0 : frameT);

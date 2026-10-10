@@ -1,16 +1,17 @@
 // 总览：住宅概况、四大特征入口、基础操作说明、全局开关。
 import { INDOOR_ROOMS, roomCenter } from '../scene/layout.js';
 import { section, stats, toggle, button, hint, el } from '../ui/ui.js';
+import type { OverviewServices } from './services.js';
 
 export class OverviewFeature {
   // Fields are declared here and initialized by the existing runtime flow.
-  declare app: any;
+  declare app: OverviewServices;
   declare labelToggle: any;
   declare roomLabels: any;
   declare showLabels: any;
   declare stats: any;
 
-  constructor(app) {
+  constructor(app: OverviewServices) {
     this.app = app;
     this.roomLabels = INDOOR_ROOMS.map((r) => {
       const c = roomCenter(r);
@@ -36,11 +37,11 @@ export class OverviewFeature {
       { k: '在线设备', v: () => app.devices.registry.all().filter((d) => d.module).length, unit: '台' },
       { k: '室外温度', v: () => app.envModel.outdoor.temp.toFixed(1), unit: '℃' },
       { k: '室内平均温度', v: () => (INDOOR_ROOMS.reduce((s, r) => s + app.envModel.rooms[r.id].temp, 0) / INDOOR_ROOMS.length).toFixed(1), unit: '℃' },
-      { k: '光伏发电', v: () => (app.features.green?.state.pv ?? 0).toFixed(2), unit: 'kW' },
-      { k: '储能电量', v: () => (app.features.green?.state.soc ?? 0).toFixed(0), unit: '%' },
+      { k: '光伏发电', v: () => app.home.energy.state.pv.toFixed(2), unit: 'kW' },
+      { k: '储能电量', v: () => app.home.energy.state.soc.toFixed(0), unit: '%' },
     ]);
     s1.append(this.stats);
-    s1.append(el('div', { class: 'btns', style: 'margin-top:8px' }, button('📊 打开数据大屏', () => app.dashboard.toggle(), 'primary')));
+    s1.append(el('div', { class: 'btns', style: 'margin-top:8px' }, button('📊 打开数据大屏', () => app.toggleDashboard(), 'primary')));
     root.append(s1);
 
     const s2 = section('“好房子”四大特征', '点击进入对应功能页，每一类功能都可以独立演示。');
@@ -58,7 +59,7 @@ export class OverviewFeature {
 
     const s3 = section('显示');
     s3.append(el('div', { class: 'btns' },
-      button('整栋', () => app.viewFloor('all')), button('只看一层', () => { app.viewFloor(0); app.rig.flyTo([0, 24, 10], [0, 0, 0.5]); }), button('只看二层', () => { app.viewFloor(1); app.rig.flyTo([0, 27, 10], [0, 3.2, 0.5]); }),
+      button('整栋', () => app.viewFloor('all')), button('只看一层', () => { app.viewFloor(0); app.flyTo([0, 24, 10], [0, 0, 0.5]); }), button('只看二层', () => { app.viewFloor(1); app.flyTo([0, 27, 10], [0, 3.2, 0.5]); }),
     ));
     this.labelToggle = toggle('显示房间名称', () => this.showLabels, (v) => this.setLabels(v));
     s3.append(this.labelToggle);

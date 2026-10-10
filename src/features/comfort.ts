@@ -5,10 +5,31 @@
 //  4. 适老无障碍：轮椅沿路线移动，检测通道宽度与回转空间
 import * as THREE from 'three';
 import { INDOOR_ROOMS, roomAt, roomById, FLOORS } from '../scene/layout.js';
+import type { Room } from '../scene/layout.js';
 import { box, cylinder, mat } from '../scene/common.js';
 import { sunDirection } from '../scene/environment.js';
 import { FloorPath } from '../systems/pathViz.js';
 import { section, toggle, button, buttonGroup, stats, chart, chartBase, hint, el, toast } from '../ui/ui.js';
+import type { OpeningHandle } from '../modules/contracts';
+import type { NavPoint, XZ } from '../systems/nav.js';
+import type { ComfortServices } from './services.js';
+
+/** 一扇开着的窗户形成的气流口：室内、室外各取一个点 */
+interface WindowAirway {
+  readonly inside: XZ;
+  readonly outside: XZ;
+  readonly y: number;
+  readonly facing: 'E' | 'W' | 'S' | 'N';
+  readonly floor: number;
+}
+
+/** 一股气流的折线路径 */
+interface AirPath {
+  readonly pts: THREE.Vector3[];
+  readonly color: THREE.Color;
+  readonly speed: number;
+  readonly spread: number;
+}
 
 // ---------------- 空气流动粒子 ----------------
 class AirParticles {
@@ -29,7 +50,7 @@ class AirParticles {
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
     this.geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
     const c = document.createElement('canvas'); c.width = c.height = 32;
-    const g = c.getContext('2d');
+    const g = c.getContext('2d')!;
     const grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
     grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grd; g.fillRect(0, 0, 32, 32);
@@ -116,7 +137,7 @@ export class ComfortFeature {
   declare airKey: any;
   declare airStats: any;
   declare airSummary: any;
-  declare app: any;
+  declare app: ComfortServices;
   declare curveChart: any;
   declare freshToggle: any;
   declare history: any;
@@ -132,8 +153,9 @@ export class ComfortFeature {
   declare wheelS: any;
   declare winToggle: any;
 
-  constructor(app) {
+  constructor(app: ComfortServices) {
     this.app = app;
+    app.heatmap.onChange(() => this.metricBtns?.refresh());
     this.shadingOn = false;
     this.air = new AirParticles(app.scene);
     this.showAir = true;
@@ -154,7 +176,7 @@ export class ComfortFeature {
     }
     g.visible = false;
     this.shading = g;
-    this.app.house.root.add(g);
+    this.app.house.addFixture(g);
   }
 
   setShading(on) {
@@ -164,24 +186,23 @@ export class ComfortFeature {
 
   // ---------- 通风路径 ----------
   // 夏季主导风向为东南风：南墙、东墙上的开窗为进风口，北墙、西墙上的开窗为出风口；每层分别计算
-  windowInfo(w) {
-    const p = w.group.position;
-    const n = new THREE.Vector3(0, 0, 1).applyQuaternion(w.group.quaternion);
-    let inside = null, outside = null;
+  windowInfo(w: OpeningHandle): WindowAirway | null {
+    const { center: p, normal: n } = w.getFrame();
+    let inside: XZ | null = null, outside: XZ | null = null;
     for (const s of [1, -1]) {
       const q = { x: p.x + n.x * s * 0.7, z: p.z + n.z * s * 0.7 };
       const r = roomAt(q.x, q.z, w.floor);
       if (r && !r.outdoor) inside = q; else outside = { x: p.x + n.x * s * 2.0, z: p.z + n.z * s * 2.0 };
     }
-    const y = FLOORS[w.floor].y + w.op.bottom + (w.op.top - w.op.bottom) / 2;
+    const y = p.y;
     const facing = Math.abs(n.x) > 0.5 ? (p.x > 0 ? 'E' : 'W') : (p.z > 0 ? 'S' : 'N');
-    return { inside, outside, y, facing, w, floor: w.floor };
+    return inside && outside ? { inside, outside, y, facing, floor: w.floor } : null;
   }
 
   rebuildAirflow() {
     const app = this.app;
-    const open = (Object.values(app.house.windows) as any[]).filter((w) => w.isOpen).map((w) => this.windowInfo(w)).filter((i) => i.inside && i.outside);
-    const paths = [];
+    const open = app.openings.list(['window', 'slide']).filter((w) => w.isOpen()).map((w) => this.windowInfo(w)).filter((i): i is WindowAirway => i !== null);
+    const paths: AirPath[] = [];
     const fresh = new THREE.Color(0x39b4ff);
     this.airSummary = { inlets: 0, outlets: 0 };
     for (const floor of [0, 1]) {
@@ -189,15 +210,13 @@ export class ComfortFeature {
       const inlets = open.filter((i) => i.floor === floor && (i.facing === 'S' || i.facing === 'E'));
       const outlets = open.filter((i) => i.floor === floor && (i.facing === 'N' || i.facing === 'W'));
       this.airSummary.inlets += inlets.length; this.airSummary.outlets += outlets.length;
-      const used = new Set();
       for (const a of inlets) {
-        let best = null;
+        let best: { b: WindowAirway; path: NavPoint[] } | null = null;
         for (const b of outlets) {
           const path = app.nav.findPath({ x: a.inside.x, z: a.inside.z, floor }, { x: b.inside.x, z: b.inside.z, floor });
           if (path && (!best || path.length < best.path.length)) best = { b, path };
         }
         if (best) {
-          used.add(best.b);
           const pts = [new THREE.Vector3(a.outside.x, a.y, a.outside.z), ...best.path.map((p, i) => new THREE.Vector3(p.x, fy + 1.4 + Math.sin(i * 1.3) * 0.15, p.z)), new THREE.Vector3(best.b.outside.x, best.b.y, best.b.outside.z)];
           paths.push({ pts, color: fresh, speed: 1.6, spread: 0.8 });
         } else {
@@ -223,6 +242,7 @@ export class ComfortFeature {
       const c = new THREE.Color(0x3ddc84);
       for (const v of ventilation.getOutlets?.() ?? []) {
         const r = roomById(v.room);
+        if (!r) continue;
         for (let k = 0; k < 4; k++) {
           const a = (k / 4) * Math.PI * 2 + 0.4;
           const tx = THREE.MathUtils.clamp(v.x + Math.cos(a) * 1.4, r.x0 + 0.3, r.x1 - 0.3);
@@ -237,7 +257,7 @@ export class ComfortFeature {
   }
 
   setAllWindows(open) {
-    for (const w of (Object.values(this.app.house.windows) as any[])) if (w.op.kind === 'window') w.setOpen(open);
+    for (const w of this.app.openings.list('window')) w.setOpen(open);
     this.rebuildAirflow();
   }
 
@@ -245,8 +265,7 @@ export class ComfortFeature {
   // 每个房间取 3×3 个地面采样点，每半小时朝太阳方向发射射线，没有被墙体、屋顶、遮阳板挡住就算"被阳光直射"
   sunlightHours(day, withShading) {
     const app = this.app;
-    const h = app.house;
-    const blockers = [h.walls, h.floors, h.roof, h.root.getObjectByName('details')];
+    const blockers = [...app.house.sunBlockers];
     if (withShading) blockers.push(this.shading);
     const ray = new THREE.Raycaster();
     const result = {};
@@ -293,7 +312,7 @@ export class ComfortFeature {
 
   drawSunCurve() {
     const day = this.app.clock.day;
-    const hours = [], elev = [];
+    const hours: number[] = [], elev: number[] = [];
     for (let h = 4; h <= 20; h += 0.25) { hours.push(h); elev.push(+Math.max(0, sunDirection(h, day).elevation).toFixed(1)); }
     const c = this.curveChart.getChart();
     const now = this.app.clock.hour;
@@ -315,20 +334,20 @@ export class ComfortFeature {
     this.clearAccess();
     // 路线：老人房床边 → 卫生间（马桶前）→ 客厅沙发
     const stops = [{ x: -5.6, z: -2.4, name: '老人房床边' }, { x: -1.9, z: -2.3, name: '卫生间' }, { x: -6.3, z: 1.9, name: '客厅沙发' }];
-    let pts = [];
+    let pts: NavPoint[] = [];
     for (let i = 0; i < stops.length - 1; i++) {
       const p = app.nav.findPath({ x: stops[i].x, z: stops[i].z, floor: 0 }, { x: stops[i + 1].x, z: stops[i + 1].z, floor: 0 }, { radius: 1 });
       if (!p) { toast('路线规划失败'); return; }
       pts = pts.concat(i ? p.slice(1) : p);
     }
     // 把路线加密成 0.1m 一个点，逐点测量通行宽度
-    const dense = [];
+    const dense: XZ[] = [];
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i], b = pts[i + 1];
       const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.1));
       for (let k = 0; k < n; k++) dense.push({ x: a.x + (b.x - a.x) * k / n, z: a.z + (b.z - a.z) * k / n });
     }
-    dense.push(pts.at(-1));
+    dense.push(pts[pts.length - 1]);
     const widths = dense.map((p, i) => {
       const q = dense[Math.min(dense.length - 1, i + 1)], o = dense[Math.max(0, i - 1)];
       return app.nav.passWidth(p.x, p.z, q.x - o.x, q.z - o.z);
@@ -360,15 +379,16 @@ export class ComfortFeature {
     const res = this.accessResult;
     res.innerHTML = `路线：${stops.map((s) => s.name).join(' → ')}，全长 ${this.accessPath.length.toFixed(1)} m<br>` +
       `最窄通行宽度：<b style="color:${minW < need ? '#d64541' : '#2e9d57'}">${minW.toFixed(2)} m</b>（要求 ≥ ${need} m）${narrow ? `，有 ${(narrow * 0.1).toFixed(1)} m 路段偏窄` : '，全程满足'}<br>` +
-      `回转空间（直径 1.5 m）：${Object.entries(turn).map(([id, c]) => `${roomById(id).name}${c ? '✔' : '✘'}`).join('　')}<br>` +
+      `回转空间（直径 1.5 m）：${Object.entries(turn).map(([id, c]) => `${roomById(id)?.name ?? id}${c ? '✔' : '✘'}`).join('　')}<br>` +
       `地面无高差、门洞净宽 0.9–1.0 m、走廊设连续扶手、卫生间设安全抓杆与淋浴座椅。`;
     app.viewFloor(0);
-    app.rig.flyTo([-3, 18, 9], [-3, 0, -0.5]);
+    app.flyTo([-3, 18, 9], [-3, 0, -0.5]);
   }
 
-  findTurningCircle(r) {
+  findTurningCircle(r: Room | undefined): XZ | null {
+    if (!r) return null;
     const nav = this.app.nav;
-    let best = null;
+    let best: XZ | null = null;
     for (let x = r.x0 + 0.85; x <= r.x1 - 0.85; x += 0.1) for (let z = r.z0 + 0.85; z <= r.z1 - 0.85; z += 0.1) {
       let ok = true;
       for (let a = 0; a < 16 && ok; a++) for (const rr of [0.25, 0.5, 0.75]) {
@@ -392,7 +412,7 @@ export class ComfortFeature {
     const s1 = section('采光与日照', '拖动底部时间栏或点击“播放”，太阳位置按广州纬度实时计算，室内阴影与采光范围随之变化。外遮阳可遮挡夏季高角度阳光，冬季低角度阳光仍能照进室内。');
     s1.append(el('div', { class: 'btns' },
       button('上午 9 点', () => this.setHour(9)), button('正午', () => this.setHour(12)), button('下午 4 点', () => this.setHour(16)), button('傍晚 6 点', () => this.setHour(18)),
-      button('播放一天', () => { app.clock.playing = true; this.setHour(6); }, 'primary'),
+      button('播放一天', () => { app.setPlaying(true); this.setHour(6); }, 'primary'),
     ));
     s1.append(toggle('南向外遮阳（遮阳板格栅）', () => this.shadingOn, (v) => this.setShading(v)));
     s1.append(toggle('窗帘全部打开', () => (app.devices.registry.getCurtain('curtain-living')?.getOpenRatio() ?? 0) > 0.5, (v) => app.devices.registry.byType('curtain').forEach((d) => app.devices.registry.setCurtain(d.id, v ? 1 : 0))));
@@ -401,11 +421,11 @@ export class ComfortFeature {
     this.sunChart = chart(200);
     s1.append(button('分析各房间日照时长（射线检测）', () => this.runSunAnalysis(), 'primary'));
     s1.append(this.sunChart);
-    s1.append(el('div', { class: 'btns' }, button('客厅采光视角', () => { app.rig.flyTo([-3.9, 2.3, 4.7], [-7.0, 0.8, 1.9]); app.viewFloor('all'); }), button('起居室采光视角', () => { app.rig.flyTo([2.4, 5.0, 4.4], [-2.6, 3.9, 2.4]); app.viewFloor('all'); })));
+    s1.append(el('div', { class: 'btns' }, button('客厅采光视角', () => { app.flyTo([-3.9, 2.3, 4.7], [-7.0, 0.8, 1.9]); app.viewFloor('all'); }), button('起居室采光视角', () => { app.flyTo([2.4, 5.0, 4.4], [-2.6, 3.9, 2.4]); app.viewFloor('all'); })));
     root.append(s1);
 
     const s2 = section('自然通风与新风', '夏季东南风：南、东侧开窗进风，北、西侧开窗出风，形成穿堂风。蓝色粒子为室外自然风，绿色粒子为新风系统送出的过滤新风。');
-    this.winToggle = toggle('打开所有窗户（自然通风）', () => (Object.values(app.house.windows) as any[]).some((w) => w.op.kind === 'window' && w.isOpen), (v) => this.setAllWindows(v));
+    this.winToggle = toggle('打开所有窗户（自然通风）', () => app.openings.list('window').some((w) => w.isOpen()), (v) => this.setAllWindows(v));
     s2.append(this.winToggle);
     this.freshToggle = toggle('新风系统', () => app.devices.registry.getVentilation('fresh-air')?.isOn() ?? false, (v) => { app.devices.registry.getVentilation('fresh-air')?.setOn(v); this.rebuildAirflow(); });
     s2.append(this.freshToggle);
@@ -427,11 +447,11 @@ export class ComfortFeature {
     const s3 = section('温湿度与空气质量分布', '在地面上以颜色显示各房间的环境参数（红→黄→蓝表示从高到低），并标注数值；可对比开窗、空调、新风前后的变化。');
     this.metricBtns = buttonGroup([
       { label: '关闭', value: 'none' }, { label: '温度', value: 'temp' }, { label: '湿度', value: 'rh' }, { label: 'PM2.5', value: 'pm' }, { label: 'CO₂', value: 'co2' }, { label: '噪声', value: 'noise' },
-    ], () => app.features.layers.metric, (v) => app.features.layers.setHeatmap(v));
+    ], () => app.heatmap.metric, (v) => app.heatmap.setHeatmap(v));
     s3.append(this.metricBtns);
     s3.append(el('div', { class: 'btns', style: 'margin-top:6px' },
-      button('一层', () => app.features.layers.setHeatmap(app.features.layers.metric === 'none' ? 'temp' : app.features.layers.metric, 0)),
-      button('二层', () => app.features.layers.setHeatmap(app.features.layers.metric === 'none' ? 'temp' : app.features.layers.metric, 1)),
+      button('一层', () => app.heatmap.setHeatmap(app.heatmap.metric === 'none' ? 'temp' : app.heatmap.metric, 0)),
+      button('二层', () => app.heatmap.setHeatmap(app.heatmap.metric === 'none' ? 'temp' : app.heatmap.metric, 1)),
       button('打开全部空调', () => app.devices.registry.byType('ac').forEach((d) => { const c = app.devices.registry.getClimate(d.id); c?.setSetpoint(25); c?.setOn(true); })),
       button('关闭全部空调', () => app.devices.registry.byType('ac').forEach((d) => app.devices.registry.getClimate(d.id)?.setOn(false))),
     ));
@@ -443,12 +463,12 @@ export class ComfortFeature {
     this.accessResult.style.marginTop = '6px';
     s4.append(this.accessResult);
     s4.append(el('div', { class: 'btns', style: 'margin-top:6px' },
-      button('查看卫生间适老设施', () => { app.viewFloor(0); app.rig.flyTo([-1.2, 4.6, 0.6], [-2.0, 0.5, -3.0]); }), button('查看家用电梯', () => { app.viewFloor('all'); app.rig.flyTo([3.1, 5.0, 0.4], [2.7, 1.6, -4.0]); }),
+      button('查看卫生间适老设施', () => { app.viewFloor(0); app.flyTo([-1.2, 4.6, 0.6], [-2.0, 0.5, -3.0]); }), button('查看家用电梯', () => { app.viewFloor('all'); app.flyTo([3.1, 5.0, 0.4], [2.7, 1.6, -4.0]); }),
       button('夜间感应灯', () => { const n = app.devices.registry.getPower('night-light'); if (!n) return; n.setOn(!n.isOn()); toast(n.isOn() ? '夜间感应地脚灯已点亮' : '夜间感应地脚灯已关闭'); }),
     ));
     root.append(s4);
 
-    app.onTimeChanged.push(() => { if (app.activeTab === 'comfort') this.drawSunCurveThrottled(); });
+    app.onTimeChanged(() => { if (app.activeTab === 'comfort') this.drawSunCurveThrottled(); });
   }
 
   drawSunCurveThrottled() {
@@ -505,7 +525,7 @@ export class ComfortFeature {
     if (h.t.length > 120) for (const k in h) h[k].shift();
     // 门窗在别处被改变时，重新生成气流路径
     const ventilation = this.app.devices.registry.getVentilation('fresh-air');
-    const key = (Object.values(this.app.house.windows) as any[]).map((w) => (w.isOpen ? 1 : 0)).join('') + (ventilation?.isOn() ?? false) + (ventilation?.getLevel() ?? 0);
+    const key = this.app.openings.list(['window', 'slide']).map((w) => (w.isOpen() ? 1 : 0)).join('') + (ventilation?.isOn() ?? false) + (ventilation?.getLevel() ?? 0);
     if (key !== this.airKey) { this.airKey = key; this.rebuildAirflow(); this.winToggle?.refresh(); this.freshToggle?.refresh(); }
     if (!active) return;
     this.airStats.refresh();

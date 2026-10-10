@@ -23,6 +23,7 @@ export interface HouseTelevisionConfig {
 }
 
 export function createHouseTelevision(config: HouseTelevisionConfig): SceneModule {
+  if (config.kind !== 'television') throw new Error('Television factory requires kind "television": ' + config.id);
   if (!config.id.trim() || !config.name.trim() || !config.room.trim()) {
     throw new Error('Television id, name and room are required');
   }

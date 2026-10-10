@@ -41,6 +41,7 @@ export function createHouseFreshAir(
   context: HouseFreshAirFactoryContext,
   config: HouseFreshAirConfig,
 ): SceneModule {
+  if (config.kind !== 'freshAir') throw new Error('Fresh-air factory requires kind "freshAir": ' + config.id);
   if (!config.id.trim() || !config.room.trim() || !config.name.trim()) {
     throw new Error('Fresh-air system id, name and room are required');
   }

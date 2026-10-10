@@ -4,6 +4,7 @@ import { el, toggle, slider, button } from '../ui/ui.js';
 import { sectionPlane } from '../scene/common.js';
 import { STATUS_TEXT } from '../scene/devices.js';
 import { roomById } from '../scene/layout.js';
+import { Disposer } from './disposer.js';
 
 export class Selection {
   // Fields are declared here and initialized by the existing runtime flow.
@@ -16,6 +17,7 @@ export class Selection {
   declare panel: any;
   declare raycaster: any;
   declare selected: any;
+  private readonly events = new Disposer();
 
   constructor(app) {
     this.app = app;
@@ -32,15 +34,15 @@ export class Selection {
 
     // 区分"点击"和"拖动旋转视角"：按下和抬起位置相差很小才算点击
     const dom = app.renderer.domElement;
-    let down = null;
-    dom.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
-    dom.addEventListener('pointerup', (e) => {
+    let down: { x: number; y: number; t: number } | null = null;
+    this.events.listen(dom, 'pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+    this.events.listen(dom, 'pointerup', (e) => {
       if (!down || e.button !== 0) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       if (moved < 5 && performance.now() - down.t < 500) this.pick(e.clientX, e.clientY);
       down = null;
     });
-    dom.addEventListener('dblclick', () => { if (this.selected) app.rig.focus(this.selected); });
+    this.events.listen(dom, 'dblclick', () => { if (this.selected) app.rig.focus(this.selected); });
   }
 
   // 物体及其所有父节点都可见，才算可见
@@ -89,6 +91,19 @@ export class Selection {
     if (!root) return;
     this.select(root);
     if (focus) this.app.rig.focus(root);
+  }
+
+  /** 取消选中，移除鼠标监听和选中框 */
+  dispose() {
+    this.select(null);
+    this.events.dispose();
+    this.helper.removeFromParent();
+    this.helper.dispose();
+  }
+
+  /** 选中对象的信息或控件变化后，重新绘制信息卡片 */
+  refresh() {
+    if (this.selected) this.render();
   }
 
   render() {

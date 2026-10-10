@@ -334,7 +334,7 @@ export const deviceFactories = { ...switchableFactories, ...genericFactories } a
 export function createDeviceFromCatalog(kind: DeviceKind, config: DeviceConfig): SceneModule {
   const factory = deviceFactories[kind];
   if (!factory) throw new Error(`Unknown device factory: ${kind}`);
-  return factory({ ...config, info: { ...DEVICE_INFO[kind], ...config.info } });
+  return factory({ ...config, info: { ...DEVICE_INFO[kind], ...config.info, name: config.info?.name ?? DEVICE_INFO[kind]?.name ?? kind } });
 }
 
 export function deviceDefinition(kind: DeviceKind, definitionId = `device-${kind}`): SceneModuleDefinition<DeviceConfig> {

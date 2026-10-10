@@ -21,6 +21,7 @@ export interface HouseNightLightConfig {
 }
 
 export function createHouseNightLight(config: HouseNightLightConfig): SceneModule {
+  if (config.kind !== 'nightLight') throw new Error('Night light factory requires kind "nightLight": ' + config.id);
   if (!config.id.trim() || !config.name.trim() || !config.room.trim()) {
     throw new Error('Night light id, name and room are required');
   }

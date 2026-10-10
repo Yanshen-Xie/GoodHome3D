@@ -220,11 +220,23 @@ export class Environment {
     w.position.y = -0.3 - T.depth + h / 2;
   }
 
+  getTankLevel() { return this.rainTank.level; }
+
   /** 剖切显示地下蓄水池 */
   showTankSection(on) {
     this.rainTank.group.visible = on;
     this.pitCover.visible = !on;
   }
+
+  isTankSectionVisible() { return this.rainTank.group.visible; }
+
+  /** 围栏红外对射报警：探测器指示灯变亮 */
+  setPerimeterAlert(active) {
+    for (const led of this.beamPosts) led.material.emissiveIntensity = active ? 4 : 1;
+  }
+
+  /** 功能页附加的室外小品（如电网接入电杆），随室外图层一起显示和隐藏 */
+  addProp(...objects) { this.group.add(...objects); }
 
   buildGarden(nav) {
     const g = this.group;
@@ -232,7 +244,7 @@ export class Environment {
     // ---- 围栏（木栅栏，实例化渲染），西侧留出入户通道和车道，东侧留小门 ----
     const fenceMat = mat('woodLight');
     const fence = new THREE.Group();
-    const postMatrices = [];
+    const postMatrices: THREE.Matrix4[] = [];
     const addFence = (x0, z0, x1, z1) => {
       const len = Math.hypot(x1 - x0, z1 - z0);
       const alongX = z0 === z1;
@@ -405,7 +417,7 @@ export class Environment {
   neighborHouse(x, z, w, d, h, color, rot) {
     const g = new THREE.Group();
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
-    const cg = c.getContext('2d');
+    const cg = c.getContext('2d')!;
     cg.fillStyle = '#' + color.toString(16).padStart(6, '0'); cg.fillRect(0, 0, 256, 128);
     cg.fillStyle = '#3a4a5a';
     for (let i = 0; i < 4; i++) { cg.fillRect(24 + i * 60, 30, 34, 50); }
@@ -466,13 +478,13 @@ export class Environment {
   // 远山：一圈起伏的山体，填满地平线
   buildHills() {
     const segs = 96, R = 320;
-    const pts = [];
+    const pts: [number, number, number][] = [];
     for (let i = 0; i <= segs; i++) {
       const a = (i / segs) * Math.PI * 2;
       const h = 18 + 14 * Math.sin(a * 3.1) + 9 * Math.sin(a * 7.3 + 1) + 5 * Math.sin(a * 13.7 + 2);
       pts.push([Math.cos(a) * R, Math.sin(a) * R, h]);
     }
-    const pos = [], idx = [];
+    const pos: number[] = [], idx: number[] = [];
     pts.forEach(([x, z, h], i) => { pos.push(x, -1, z, x * 1.05, h, z * 1.05); if (i < segs) idx.push(i * 2, i * 2 + 2, i * 2 + 1, i * 2 + 1, i * 2 + 2, i * 2 + 3); });
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

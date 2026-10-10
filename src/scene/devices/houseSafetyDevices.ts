@@ -21,6 +21,7 @@ import type {
   ModuleInfo,
   ModulePose,
   NetworkCapability,
+  OpeningsService,
   PowerCapability,
   PresenceSensorCapability,
   ScalarSensorCapability,
@@ -100,6 +101,12 @@ export interface HouseWaterLeakSensorConfig extends HouseSafetyDeviceConfig<'wat
 }
 export interface HouseSmartLockConfig extends HouseSafetyDeviceConfig<'smartLock'> {
   readonly initiallyLocked?: boolean;
+  /** Door whose leaf carries the lock; needs an openings service in the factory context. */
+  readonly doorId?: string;
+}
+
+export interface HouseSmartLockFactoryContext {
+  readonly openings?: OpeningsService;
 }
 
 export interface HouseCameraConfig extends HouseSafetyDeviceConfig<'camera'> {
@@ -335,7 +342,7 @@ function createHouseValveModule(config: HouseValveConfig): SceneModule {
     ? mat('red')
     : uniqueMat({ color: 0x1f6fd1, roughness: 0.45 });
   let handle: THREE.Mesh;
-  let led: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>;
+  let led: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial> | undefined; // 只有燃气阀门有状态灯
   if (gas) {
     root.add(cylinder(0.02, 0.02, 1.75, 'metal', 0, 1.25, 0, 10));
     root.add(box(0.12, 0.1, 0.1, 'darkMetal', 0, 1.2, 0.04), box(0.1, 0.12, 0.12, 'red', 0, 1.3, 0.08));
@@ -748,7 +755,7 @@ export function createHouseIntercom(config: HouseSafetyDeviceConfig<'intercom'>)
   return module;
 }
 
-export function createHouseSmartLock(config: HouseSmartLockConfig): SceneModule {
+export function createHouseSmartLock(config: HouseSmartLockConfig, context: HouseSmartLockFactoryContext = {}): SceneModule {
   validateConfig(config, 'smartLock');
   const root = new THREE.Group();
   root.add(box(0.07, 0.28, 0.04, 'blackPlastic'));
@@ -769,6 +776,9 @@ export function createHouseSmartLock(config: HouseSmartLockConfig): SceneModule 
     [DEVICE_CAPABILITY.lock, lock],
   ], undefined, undefined, (status) => led.material.emissive.setHex(STATUS_COLOR[status]));
   setLocked(locked);
+  if (config.doorId && context.openings && !context.openings.attachToLeaf(config.doorId, module)) {
+    throw new Error(`Smart lock ${config.id}: door ${config.doorId} has no hinged leaf`);
+  }
   return module;
 }
 
@@ -859,6 +869,10 @@ function poolFromFactoryContext(context: ModuleFactoryContext): LightPool | unde
   return context.services?.get(MODULE_SERVICE.lightPool) as LightPool | undefined;
 }
 
+function openingsFromFactoryContext(context: ModuleFactoryContext): OpeningsService | undefined {
+  return context.services?.get(MODULE_SERVICE.openings) as OpeningsService | undefined;
+}
+
 export function houseSafetyDeviceDefinitions(): SceneModuleDefinition<SafetyConfig>[] {
   const plain = <K extends SafetyKind>(id: string, kind: K, create: (config: HouseSafetyDeviceConfig<K>) => SceneModule) => ({
     id,
@@ -896,7 +910,7 @@ export function houseSafetyDeviceDefinitions(): SceneModuleDefinition<SafetyConf
     plain('house-distribution-panel', 'distributionPanel', createHouseDistributionPanel),
     plain('house-gateway', 'gateway', createHouseGateway),
     plain('house-intercom', 'intercom', createHouseIntercom),
-    { id: 'house-smart-lock', kind: 'device', create: (_context, config) => createHouseSmartLock(config as HouseSmartLockConfig) },
+    { id: 'house-smart-lock', kind: 'device', create: (context, config) => createHouseSmartLock(config as HouseSmartLockConfig, { openings: openingsFromFactoryContext(context) }) },
     { id: 'house-camera', kind: 'device', create: (_context, config) => createHouseCamera(config as HouseCameraConfig) },
     { id: 'house-floodlight', kind: 'device', create: (context, config) => createHouseFloodlight(config as HouseFloodlightConfig, { lightPool: poolFromFactoryContext(context) }) },
   ];

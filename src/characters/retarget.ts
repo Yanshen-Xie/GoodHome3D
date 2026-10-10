@@ -47,18 +47,18 @@ export function retargetClip(src, srcClip, srcTPose, tgt, tgtTPose, yawOffset = 
   const srcBones = bonesOf(src);
   const tgtBones = bonesOf(tgt);
   // 目标骨骼按"父在前、子在后"的顺序排列（traverse 本身就是先序遍历）
-  const order = [];
-  tgt.traverse((o) => { if (o.isBone && srcBones.has(o.name)) order.push(o); });
+  const order: THREE.Bone[] = [];
+  tgt.traverse((o: THREE.Object3D) => { if ((o as THREE.Bone).isBone && srcBones.has(o.name)) order.push(o as THREE.Bone); });
 
   // 1. 记录两个角色 T-Pose 时每根骨骼的世界旋转
   applyPose(src, srcTPose, 0);
-  const srcRest = new Map();
+  const srcRest = new Map<string, THREE.Quaternion>();
   for (const [name, b] of srcBones) srcRest.set(name, worldQuat(b));
   const srcHips = srcBones.get('mixamorigHips');
   const srcHipsRestY = srcHips.getWorldPosition(new THREE.Vector3()).y;
 
   applyPose(tgt, tgtTPose, 0);
-  const tgtRest = new Map();
+  const tgtRest = new Map<string, THREE.Quaternion>();
   for (const b of order) tgtRest.set(b.name, worldQuat(b));
   const tgtHips = tgtBones.get('mixamorigHips');
   const tgtHipsRestWorld = tgtHips.getWorldPosition(new THREE.Vector3());
@@ -71,10 +71,10 @@ export function retargetClip(src, srcClip, srcTPose, tgt, tgtTPose, yawOffset = 
 
   // 2. 逐帧计算
   const frames = Math.max(2, Math.round(srcClip.duration * fps) + 1);
-  const times = [];
-  const quatValues = new Map(order.map((b) => [b.name, []]));
-  const hipsPos = [];
-  const newWorld = new Map();
+  const times: number[] = [];
+  const quatValues = new Map<string, number[]>(order.map((b) => [b.name, []]));
+  const hipsPos: number[] = [];
+  const newWorld = new Map<string, THREE.Quaternion>();
 
   for (let f = 0; f < frames; f++) {
     const t = Math.min(srcClip.duration, f / fps);
@@ -82,14 +82,15 @@ export function retargetClip(src, srcClip, srcTPose, tgt, tgtTPose, yawOffset = 
     applyPose(src, srcClip, t);
     newWorld.clear();
     for (const b of order) {
-      const delta = worldQuat(srcBones.get(b.name)).multiply(srcRest.get(b.name).clone().invert());
+      const delta = worldQuat(srcBones.get(b.name)!).multiply(srcRest.get(b.name)!.clone().invert());
       delta.premultiply(R).multiply(Rinv);
-      const wq = delta.multiply(tgtRest.get(b.name));
+      const wq = delta.multiply(tgtRest.get(b.name)!);
       newWorld.set(b.name, wq);
       // 父骨骼的新世界旋转：如果父节点也是被驱动的骨骼就用刚算出的值，否则用它当前（不变）的世界旋转
-      const parentQ = newWorld.get(b.parent.name) ?? worldQuat(b.parent);
+      const parent = b.parent!;
+      const parentQ = newWorld.get(parent.name) ?? worldQuat(parent);
       const local = parentQ.clone().invert().multiply(wq);
-      quatValues.get(b.name).push(local.x, local.y, local.z, local.w);
+      quatValues.get(b.name)!.push(local.x, local.y, local.z, local.w);
     }
     // 胯部上下起伏
     const dy = (srcHips.getWorldPosition(new THREE.Vector3()).y - srcHipsRestY) * heightRatio;
@@ -99,7 +100,7 @@ export function retargetClip(src, srcClip, srcTPose, tgt, tgtTPose, yawOffset = 
     hipsPos.push(p.x, p.y, p.z);
   }
 
-  const tracks = order.map((b) => new THREE.QuaternionKeyframeTrack(`${b.name}.quaternion`, times, quatValues.get(b.name)));
+  const tracks = order.map((b) => new THREE.QuaternionKeyframeTrack(`${b.name}.quaternion`, times, quatValues.get(b.name)!));
   tracks.push(new THREE.VectorKeyframeTrack('mixamorigHips.position', times, hipsPos));
   applyPose(tgt, tgtTPose, 0);
   return new THREE.AnimationClip(srcClip.name, srcClip.duration, tracks);

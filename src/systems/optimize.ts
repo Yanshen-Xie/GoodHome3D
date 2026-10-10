@@ -24,17 +24,18 @@ function normalizeAttrs(g) {
 }
 
 /** 把 unit 下面的所有网格按材质合并，合并后的网格挂在 unit 下 */
-export function mergeUnit(unit) {
+export function mergeUnit(unit: THREE.Object3D) {
   unit.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(unit.matrixWorld).invert();
-  const buckets = new Map(); // 材质 → { geos, cast, receive }
-  const remove = [];
-  const found = [];
+  const buckets = new Map<THREE.Material, { geos: THREE.BufferGeometry[]; cast: boolean; receive: boolean; order: number }>(); // 材质 → { geos, cast, receive }
+  const remove: THREE.Mesh[] = [];
+  const found: THREE.Mesh[] = [];
   // 递归收集：会运动的部分（dynamic）、实例化网格、隐藏的网格整棵跳过，保持原样
-  const collect = (o) => {
-    for (const c of o.children) {
+  const collect = (o: THREE.Object3D) => {
+    for (const child of o.children) {
+      const c = child as THREE.Object3D & { isMesh?: boolean; isSkinnedMesh?: boolean; isPoints?: boolean; isLine?: boolean; isInstancedMesh?: boolean };
       if (c.userData.dynamic || c.isSkinnedMesh || c.isPoints || c.isLine || c.isInstancedMesh || !c.visible) continue;
-      if (c.isMesh) found.push(c);
+      if (c.isMesh) found.push(c as THREE.Mesh);
       collect(c);
     }
   };
@@ -42,13 +43,14 @@ export function mergeUnit(unit) {
   for (const o of found) {
     const m = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
     const base = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
-    const parts = Array.isArray(o.material)
-      ? (o.geometry.groups.length ? o.geometry.groups : [{ start: 0, count: base.attributes.position.count, materialIndex: 0 }]).map((gr) => [o.material[gr.materialIndex], subGeometry(base, gr.start, gr.count)])
-      : [[o.material, base]];
+    const materials = Array.isArray(o.material) ? o.material : null;
+    const parts: [THREE.Material, THREE.BufferGeometry][] = materials
+      ? (o.geometry.groups.length ? o.geometry.groups : [{ start: 0, count: base.attributes.position.count, materialIndex: 0 }]).map((gr) => [materials[gr.materialIndex ?? 0], subGeometry(base, gr.start, gr.count)])
+      : [[o.material as THREE.Material, base]];
     for (const [mat, g] of parts) {
       normalizeAttrs(g).applyMatrix4(m);
-      if (!buckets.has(mat)) buckets.set(mat, { geos: [], cast: false, receive: false, order: o.renderOrder });
-      const b = buckets.get(mat);
+      let b = buckets.get(mat);
+      if (!b) { b = { geos: [], cast: false, receive: false, order: o.renderOrder }; buckets.set(mat, b); }
       b.geos.push(g); b.cast ||= o.castShadow; b.receive ||= o.receiveShadow;
     }
     remove.push(o);
@@ -56,8 +58,9 @@ export function mergeUnit(unit) {
   if (remove.length < 2) return 0;
   // 被合并的网格如果还有子物体（如会动的部件），把子物体保留下来挂到原父节点上
   for (const o of remove) {
-    for (const c of [...o.children]) o.parent.attach(c);
-    o.parent.remove(o);
+    const parent = o.parent!; // 被收集的网格都来自 unit 的子树，一定有父节点
+    for (const c of [...o.children]) parent.attach(c);
+    parent.remove(o);
   }
   for (const [mat, b] of buckets) {
     const merged = mergeGeometries(b.geos, false);

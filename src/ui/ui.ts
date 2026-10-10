@@ -88,10 +88,28 @@ export function stats(items, cols = 2) {
 }
 
 /** 图表容器。echarts 需要在元素显示后才能正确计算尺寸，所以延迟初始化 */
+// 页面上创建过的全部 ECharts 实例，应用重建时统一释放
+const liveCharts = new Set<echarts.ECharts>();
+
+/** 创建 ECharts 实例并登记，便于重建时释放 */
+export function initChart(container: HTMLElement): echarts.ECharts {
+  const instance = echarts.init(container, null, { renderer: 'canvas' });
+  liveCharts.add(instance);
+  return instance;
+}
+
+/** 释放全部 ECharts 实例，返回释放的数量 */
+export function disposeAllCharts(): number {
+  const count = liveCharts.size;
+  for (const instance of liveCharts) instance.dispose();
+  liveCharts.clear();
+  return count;
+}
+
 export function chart(height = 190) {
   const div = el('div', { class: 'chart', style: `height:${height}px` }) as ChartContainer;
   div.getChart = () => {
-    if (!div._chart) div._chart = echarts.init(div, null, { renderer: 'canvas' });
+    if (!div._chart) div._chart = initChart(div);
     return div._chart;
   };
   return div;
@@ -116,7 +134,7 @@ export function hint(text) {
 /** 顶部弹出提示 */
 export function toast(text, cls = '', ms = 2600) {
   const t = el('div', { class: cls }, text);
-  document.getElementById('toast').append(t);
+  document.getElementById('toast')?.append(t);
   setTimeout(() => t.remove(), ms);
 }
 

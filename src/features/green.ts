@@ -7,6 +7,7 @@ import { sunDirection, WEATHER } from '../scene/environment.js';
 import { section, stats, chart, chartBase, toggle, button, hint, el, toast } from '../ui/ui.js';
 import { Emitter } from '../systems/particles.js';
 import { RAIN_TANK, EXT, EAVE_Y } from '../scene/layout.js';
+import type { EnergyReadout, GreenServices } from './services.js';
 
 const PV_KWP = 9.9;               // 装机容量 kWp
 const BATTERY_KWH = 10;           // 电池容量
@@ -38,17 +39,18 @@ function typicalLoad(hour, green) {
   return l;
 }
 
-let dashTex = null;
-function flowTexture() {
+let dashTex: THREE.CanvasTexture | null = null;
+function flowTexture(): THREE.CanvasTexture {
   if (dashTex) return dashTex;
   const c = document.createElement('canvas'); c.width = 128; c.height = 16;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d')!;
   const grd = g.createLinearGradient(0, 0, 128, 0);
   grd.addColorStop(0, 'rgba(255,255,255,0.15)'); grd.addColorStop(0.55, 'rgba(255,255,255,0.35)'); grd.addColorStop(0.8, 'rgba(255,255,255,1)'); grd.addColorStop(1, 'rgba(255,255,255,0.15)');
   g.fillStyle = grd; g.fillRect(0, 0, 128, 16);
-  dashTex = new THREE.CanvasTexture(c);
-  dashTex.wrapS = THREE.RepeatWrapping;
-  return dashTex;
+  const texture = new THREE.CanvasTexture(c);
+  texture.wrapS = THREE.RepeatWrapping;
+  dashTex = texture;
+  return texture;
 }
 
 /** 一条能量流管线：沿折线的管子，纹理沿管子滚动表示能量流动方向 */
@@ -83,9 +85,9 @@ class FlowLine {
   update(dt) { this.tex.offset.x -= dt * Math.sign(this.power) * (0.8 + Math.min(3, Math.abs(this.power))); }
 }
 
-export class GreenFeature {
+export class GreenFeature implements EnergyReadout {
   // Fields are declared here and initialized by the existing runtime flow.
-  declare app: any;
+  declare app: GreenServices;
   declare cmpChart: any;
   declare cmpText: any;
   declare compare: any;
@@ -106,7 +108,7 @@ export class GreenFeature {
   declare state: any;
   declare stats: any;
 
-  constructor(app) {
+  constructor(app: GreenServices) {
     this.app = app;
     this.state = { pv: 0, load: 0, soc: 55, battery: 0, grid: 0 };
     this.showFlows = true;
@@ -122,7 +124,7 @@ export class GreenFeature {
       grid: new FlowLine(s, [[-6.5, 1.9, -0.85], [-6.5, 2.6, -0.4], [-8.7, 2.6, -0.4], [-13.6, 6.1, -4.5]], 0x6c8cff),                   // 配电箱 → 电网（负值为从电网取电）
     };
     // 雨水流线：南檐沟 → 东南角落水管 → 弃流过滤器 → 地下蓄水池 → 提升泵 → 喷灌 / 冲厕
-    const gy = app.house.roofParts.gutterY, gz = app.house.roofParts.halfD + 0.05;
+    const gy = app.house.gutterY, gz = app.house.roofHalfDepth + 0.05;
     const T = RAIN_TANK;
     this.rainFlows = {
       gutter: new FlowLine(s, [[-8.3, gy, gz], [EXT.x1 + 0.35, gy, gz], [EXT.x1 + 0.35, 0.5, gz], [EXT.x1 + 0.35, 0.5, EXT.z1 + 0.95], [T.x - 0.9, -0.45, T.z - 1.4], [T.x - 0.5, -0.6, T.z - 0.4]], 0x3fa9f5),
@@ -143,7 +145,7 @@ export class GreenFeature {
     pole.castShadow = true;
     const arm = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.1), new THREE.MeshStandardMaterial({ color: 0x555555 }));
     arm.position.set(-13.6, 6.6, -4.5);
-    app.env.group.add(pole, arm);
+    app.outdoor.addProp(pole, arm);
     pole.userData.info = { name: '电网接入点（低压电杆）', category: '绿色低碳', func: '光伏余电上网 / 夜间从电网购电，双向计量电表', status: 'normal', data: {} };
     this.gridInfo = pole.userData.info;
     // 能量数值标签
@@ -169,7 +171,7 @@ export class GreenFeature {
   // 当前家庭实际用电：由各设备状态累加（与智慧、舒适模块联动）
   /** 用电分项（kW）：由各设备的实际状态累加，数据大屏的饼图也用它 */
   loadBreakdown() {
-    const d = this.app.devices, registry = this.app.devices.registry, h = this.app.clock.hour;
+    const registry = this.app.devices.registry, h = this.app.clock.hour;
     const b = { 空调: 0, 照明: 0, 热水: 0, 厨房: 0, 新风: 0, 充电桩: 0, 其他: 0.18 }; // 其他：冰箱、网关、待机设备
     for (const l of registry.byType('light')) {
       const light = registry.getLighting(l.id);
@@ -178,7 +180,7 @@ export class GreenFeature {
     for (const x of registry.byType('ac')) if (registry.getClimate(x.id)?.isOn()) b.空调 += this.ecoMode ? 0.55 : 0.8;
     const ventilation = registry.getVentilation('fresh-air');
     if (ventilation?.isOn()) b.新风 += 0.04 * ventilation.getLevel();
-    if (this.app.features.smart?.tvOn) b.其他 += 0.12;
+    if (this.app.home.tvOn) b.其他 += 0.12;
     if (h > 17 && h < 19.5) b.热水 += 1.0; // 热泵制热水时段
     if (this.app.people.list.some((p) => p.activity.includes('做饭'))) b.厨房 += 0.6;
     if (registry.getPower('ev-charger')?.isOn()) b.充电桩 += 7;
@@ -201,7 +203,7 @@ export class GreenFeature {
     if (vol <= 0.05 && r.irrigating) { r.irrigating = false; toast('蓄水池水量不足，喷灌已自动停止'); }
     r.level = vol / TANK_M3;
     r.inflow = inflow; r.outflow = outflow;
-    app.env.setTankLevel(r.level);
+    app.outdoor.setTankLevel(r.level);
     app.devices.registry.mergeInfoData('rain-filter', { 蓄水量: vol.toFixed(2) + ' m³', 进水: inflow.toFixed(2) + ' m³/h', 今日收集: r.collected.toFixed(2) + ' m³', 今日回用: r.reused.toFixed(2) + ' m³' });
   }
 
@@ -263,7 +265,7 @@ export class GreenFeature {
   // 24 小时曲线：光伏发电与家庭用电（绿色方案 / 普通方案）
   drawDayChart() {
     const { day, weather, hour } = this.app.clock;
-    const hs = [], pv = [], lg = [], ln = [];
+    const hs: number[] = [], pv: number[] = [], lg: number[] = [], ln: number[] = [];
     for (let h = 0; h <= 24; h += 0.5) { hs.push(h); pv.push(+pvPower(h, day, weather).toFixed(2)); lg.push(+typicalLoad(h, true).toFixed(2)); ln.push(+typicalLoad(h, false).toFixed(2)); }
     const sum = (a) => a.reduce((s, v) => s + v * 0.5, 0);
     this.daySum = { pv: sum(pv), green: sum(lg), normal: sum(ln) };
@@ -328,15 +330,15 @@ export class GreenFeature {
     ]);
     s1.append(this.stats);
     s1.append(el('div', { class: 'btns', style: 'margin-top:6px' },
-      button('晴天正午', () => { app.clock.weather = 'sunny'; app.setTime(12); app.syncTime(); }),
-      button('多云下午', () => { app.clock.weather = 'cloudy'; app.setTime(15); app.syncTime(); }),
-      button('雨天', () => { app.clock.weather = 'rainy'; app.setTime(11); app.syncTime(); }),
-      button('夜晚（电池放电）', () => { app.clock.weather = 'sunny'; app.setTime(21); app.syncTime(); }),
-      button('播放一天', () => { app.clock.playing = true; app.setTime(5); }, 'primary'),
+      button('晴天正午', () => { app.setWeather('sunny'); app.setTime(12); }),
+      button('多云下午', () => { app.setWeather('cloudy'); app.setTime(15); }),
+      button('雨天', () => { app.setWeather('rainy'); app.setTime(11); }),
+      button('夜晚（电池放电）', () => { app.setWeather('sunny'); app.setTime(21); }),
+      button('播放一天', () => { app.setPlaying(true); app.setTime(5); }, 'primary'),
     ));
     s1.append(el('div', { class: 'btns', style: 'margin-top:6px' },
-      button('查看屋顶光伏', () => { app.viewFloor('all'); app.rig.flyTo([16, 14, 17], [0, 6, 0]); }),
-      button('查看逆变器与储能', () => { app.rig.flyTo([14, 3, 1], [8.3, 1.2, -2.4]); }),
+      button('查看屋顶光伏', () => { app.viewFloor('all'); app.flyTo([16, 14, 17], [0, 6, 0]); }),
+      button('查看逆变器与储能', () => { app.flyTo([14, 3, 1], [8.3, 1.2, -2.4]); }),
       button('充电桩', () => app.selection.selectDevice('ev-charger')),
       button('光伏板', () => app.selection.selectDevice('pv', false)),
     ));
@@ -367,14 +369,14 @@ export class GreenFeature {
     sr.append(this.rainStats);
     sr.append(el('div', { class: 'btns', style: 'margin-top:6px' },
       button('🌧 下雨集水演示', () => {
-        app.clock.weather = 'rainy'; app.clock.speed = 1200; app.clock.playing = true; app.setTime(app.clock.hour); app.syncTime();
-        app.env.showTankSection(true); app.features.layers.cutSlider?.refresh();
-        app.rig.flyTo([18, 7, 16], [9, 0, 5]);
+        app.setPlaying(true, 1200); app.setWeather('rainy');
+        app.outdoor.showTankSection(true);
+        app.flyTo([18, 7, 16], [9, 0, 5]);
       }, 'primary'),
-      button('雨停', () => { app.clock.weather = 'sunny'; app.clock.playing = false; app.setTime(app.clock.hour); app.syncTime(); }),
+      button('雨停', () => { app.setPlaying(false); app.setWeather('sunny'); }),
     ));
-    sr.append(toggle('地下蓄水池剖切显示', () => app.env.rainTank.group.visible, (v) => { app.env.showTankSection(v); if (v) app.rig.flyTo([17, 4, 14], [11, -1, 7]); }));
-    sr.append(toggle('庭院喷灌（使用雨水）', () => this.rain.irrigating, (v) => { this.setIrrigation(v); if (v) app.rig.flyTo([14, 6, 16], [6, 0, 6]); }));
+    sr.append(toggle('地下蓄水池剖切显示', () => app.outdoor.isTankSectionVisible(), (v) => { app.outdoor.showTankSection(v); if (v) app.flyTo([17, 4, 14], [11, -1, 7]); }));
+    sr.append(toggle('庭院喷灌（使用雨水）', () => this.rain.irrigating, (v) => { this.setIrrigation(v); if (v) app.flyTo([14, 6, 16], [6, 0, 6]); }));
     root.append(sr);
 
     const s3 = section('普通方案 vs 绿色方案');
@@ -384,13 +386,13 @@ export class GreenFeature {
     s3.append(this.cmpText);
     root.append(s3);
 
-    app.onTimeChanged.push(() => { if (app.activeTab === 'green') { const n = performance.now(); if (n - (this.lastDraw ?? 0) > 500) { this.lastDraw = n; this.drawDayChart(); } } });
+    app.onTimeChanged(() => { if (app.activeTab === 'green') { const n = performance.now(); if (n - (this.lastDraw ?? 0) > 500) { this.lastDraw = n; this.drawDayChart(); } } });
   }
 
   enter() {
     this.setFlowsVisible(true);
     this.app.viewFloor('all');
-    this.app.rig.flyTo([17, 12, 15], [1, 2, 0]);
+    this.app.flyTo([17, 12, 15], [1, 2, 0]);
     this.drawDayChart();
     this.drawCompare();
   }

@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { stairHeight, FLOORS } from '../scene/layout.js';
+import { Disposer } from './disposer.js';
 
 // view：显示哪一层（'all' 全部，0 只看一层，1 只看到二层）
 export const VIEWPOINTS = [
@@ -34,6 +35,7 @@ export class CameraRig {
   declare onModeChange: any;
   declare tween: any;
   declare walk: any;
+  private readonly events = new Disposer();
 
   constructor(camera, dom, nav) {
     this.camera = camera;
@@ -96,17 +98,24 @@ export class CameraRig {
     this.camera.quaternion.setFromEuler(new THREE.Euler(this.walk.pitch, this.walk.yaw, 0, 'YXZ'));
   }
 
+  /** 移除键盘、鼠标监听和轨道控制器 */
+  dispose() {
+    this.events.dispose();
+    this.controls.dispose();
+    this.walk.keys.clear();
+  }
+
   bindWalkEvents() {
     const w = this.walk;
-    window.addEventListener('keydown', (e) => {
+    this.events.listen(window, 'keydown', (e) => {
       if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
       w.keys.add(e.code);
       if (e.code === 'Escape' && this.mode === 'walk') this.setMode('orbit');
     });
-    window.addEventListener('keyup', (e) => w.keys.delete(e.code));
-    this.dom.addEventListener('pointerdown', (e) => { if (this.mode === 'walk') { w.dragging = true; w.lastX = e.clientX; w.lastY = e.clientY; } });
-    window.addEventListener('pointerup', () => { w.dragging = false; });
-    window.addEventListener('pointermove', (e) => {
+    this.events.listen(window, 'keyup', (e) => w.keys.delete(e.code));
+    this.events.listen(this.dom, 'pointerdown', (e) => { if (this.mode === 'walk') { w.dragging = true; w.lastX = e.clientX; w.lastY = e.clientY; } });
+    this.events.listen(window, 'pointerup', () => { w.dragging = false; });
+    this.events.listen(window, 'pointermove', (e) => {
       if (this.mode !== 'walk' || !w.dragging) return;
       w.yaw -= (e.clientX - w.lastX) * 0.004;
       w.pitch = THREE.MathUtils.clamp(w.pitch - (e.clientY - w.lastY) * 0.004, -1.2, 1.2);
@@ -120,11 +129,11 @@ export class CameraRig {
    * 选与当前高度最接近、且高差不超过 STEP 的那个；都不行返回 null（被挡住）。
    */
   surfaceAt(x, z, curY) {
-    const cands = [];
+    const cands: number[] = [];
     for (const f of FLOORS) if (this.nav.isFree(x, z, f.id)) cands.push(f.y);
     const s = stairHeight(x, z);
     if (s !== null) cands.push(s);
-    let best = null;
+    let best: number | null = null;
     for (const y of cands) if (Math.abs(y - curY) <= STEP && (best === null || Math.abs(y - curY) < Math.abs(best - curY))) best = y;
     return best;
   }

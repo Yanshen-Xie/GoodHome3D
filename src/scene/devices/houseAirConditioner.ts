@@ -35,6 +35,7 @@ export function createHouseAirConditioner(
   context: HouseAirConditionerFactoryContext,
   config: HouseAirConditionerConfig,
 ): SceneModule {
+  if (config.kind !== 'airConditioner') throw new Error('Air conditioner factory requires kind "airConditioner": ' + config.id);
   if (!config.id.trim() || !config.room.trim() || !config.name.trim()) {
     throw new Error('Air conditioner id, name and room are required');
   }
